@@ -9,6 +9,7 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.speech.RecognizerIntent
 import android.graphics.Color
+import android.graphics.PointF
 import android.graphics.RectF
 import android.graphics.drawable.GradientDrawable
 import android.os.Bundle
@@ -104,24 +105,19 @@ class MainActivity : Activity() {
     private lateinit var vodSection: View
     private lateinit var vodCards: LinearLayout
     private lateinit var vodTitle: TextView
-    private lateinit var homePanel: ScrollView
-    private lateinit var homeHeroImage: ImageView
-    private lateinit var homeHeroTitle: TextView
-    private lateinit var homeHeroDescription: TextView
-    private lateinit var homeMoviesCard: FrameLayout
-    private lateinit var homeStreamingRow: LinearLayout
-    private lateinit var homeSeriesCard: FrameLayout
-    private lateinit var homeCartoonsCard: FrameLayout
-    private lateinit var homeMoviesCardImage: ImageView
-    private lateinit var homeMoviesCardTitle: TextView
-    private lateinit var homeSeriesCardImage: ImageView
-    private lateinit var homeSeriesCardTitle: TextView
-    private lateinit var homeCartoonsCardImage: ImageView
-    private lateinit var homeCartoonsCardTitle: TextView
-    private lateinit var homeCartoonsCardBadge: TextView
-    private var featuredMovie: CatalogEntry? = null
-    private var featuredSeries: CatalogEntry? = null
-    private var mostWatchedEntry: CatalogEntry? = null
+    private lateinit var homePanel: View
+    private lateinit var homeOrbitRoot: FrameLayout
+    private lateinit var orbitLines: OrbitLinesView
+    private lateinit var homeClockText: TextView
+    private lateinit var homeDateText: TextView
+    private var orbitCenterCard: FrameLayout? = null
+    private var orbitBubbles: List<View> = emptyList()
+    private val homeClockTicker = object : Runnable {
+        override fun run() {
+            updateHomeClock()
+            if (homeMode) mainHandler.postDelayed(this, 30_000)
+        }
+    }
     private var homeMode = false
     private var miniPlayer: ExoPlayer? = null
     private var miniPlayerView: PlayerView? = null
@@ -346,38 +342,11 @@ class MainActivity : Activity() {
         vodCards = findViewById(R.id.vodCards)
         vodTitle = findViewById(R.id.vodTitle)
         homePanel = findViewById(R.id.homePanel)
-        homeHeroImage = findViewById(R.id.homeHeroImage)
-        homeHeroTitle = findViewById(R.id.homeHeroTitle)
-        homeHeroDescription = findViewById(R.id.homeHeroDescription)
-        homeMoviesCard = findViewById(R.id.homeMoviesCard)
-        homeStreamingRow = findViewById(R.id.homeStreamingRow)
-        renderHomeStreamingRow()
-        homeSeriesCard = findViewById(R.id.homeSeriesCard)
-        homeCartoonsCard = findViewById(R.id.homeCartoonsCard)
-        homeMoviesCardImage = findViewById(R.id.homeMoviesCardImage)
-        homeMoviesCardTitle = findViewById(R.id.homeMoviesCardTitle)
-        homeSeriesCardImage = findViewById(R.id.homeSeriesCardImage)
-        homeSeriesCardTitle = findViewById(R.id.homeSeriesCardTitle)
-        homeCartoonsCardImage = findViewById(R.id.homeCartoonsCardImage)
-        homeCartoonsCardTitle = findViewById(R.id.homeCartoonsCardTitle)
-        homeCartoonsCardBadge = findViewById(R.id.homeCartoonsCardBadge)
-        homeMoviesCard.setOnClickListener { featuredMovie?.let { openFeaturedEntry(it) } ?: switchSection(MediaKind.MOVIE) }
-        homeSeriesCard.setOnClickListener { featuredSeries?.let { openFeaturedEntry(it) } ?: switchSection(MediaKind.SERIES) }
-        homeCartoonsCard.setOnClickListener { mostWatchedEntry?.let { openFeaturedEntry(it) } ?: switchSection(MediaKind.LIVE) }
-        listOf(
-            findViewById<View>(R.id.homeNavHome),
-            findViewById<View>(R.id.homeNavChannels),
-            findViewById<View>(R.id.homeNavMovies),
-            findViewById<View>(R.id.homeNavSeries),
-        ).forEach { navItem ->
-            navItem.isFocusable = true
-            navItem.isClickable = true
-            navItem.setOnFocusChangeListener { view, hasFocus -> view.background = if (hasFocus) rounded(0x332BFFB0, 10f) else null }
-        }
-        findViewById<View>(R.id.homeNavHome).setOnClickListener { showHome() }
-        findViewById<View>(R.id.homeNavChannels).setOnClickListener { switchSection(MediaKind.LIVE) }
-        findViewById<View>(R.id.homeNavMovies).setOnClickListener { switchSection(MediaKind.MOVIE) }
-        findViewById<View>(R.id.homeNavSeries).setOnClickListener { switchSection(MediaKind.SERIES) }
+        homeOrbitRoot = findViewById(R.id.homeOrbitRoot)
+        orbitLines = findViewById(R.id.orbitLines)
+        homeClockText = findViewById(R.id.homeClockText)
+        homeDateText = findViewById(R.id.homeDateText)
+        findViewById<View>(R.id.homeNavSearch).setOnClickListener { showSearchDialog() }
         searchHint.isFocusable = true
         searchHint.isClickable = true
         searchHint.setOnClickListener { showSearchDialog() }
@@ -623,35 +592,25 @@ class MainActivity : Activity() {
     }
 
     private fun moveHomeDpad(focused: View, keyCode: Int): Boolean {
-        val top = listOf(
-            findViewById<View>(R.id.homeNavHome),
-            findViewById<View>(R.id.homeNavChannels),
-            findViewById<View>(R.id.homeNavMovies),
-            findViewById<View>(R.id.homeNavSeries),
-        )
-        val cards = listOf(homeMoviesCard, homeSeriesCard, homeCartoonsCard)
-        return when {
-            focused in top -> {
-                val index = top.indexOf(focused)
-                when (keyCode) {
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (index > 0) top[index - 1].requestFocus() else true
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (index < top.lastIndex) top[index + 1].requestFocus() else true
-                    KeyEvent.KEYCODE_DPAD_DOWN -> cards.getOrNull(index.coerceAtMost(cards.lastIndex))?.requestFocus() ?: true
-                    KeyEvent.KEYCODE_DPAD_UP -> true
-                    else -> false
-                }
+        val center = orbitCenterCard
+        val bubbles = orbitBubbles
+        if (focused === center) {
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> focusNavigationForCurrentSection()
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT -> bubbles.firstOrNull()?.requestFocus() ?: true
+                else -> false
             }
-            focused in cards -> {
-                val index = cards.indexOf(focused)
-                when (keyCode) {
-                    KeyEvent.KEYCODE_DPAD_LEFT -> if (index > 0) cards[index - 1].requestFocus() else true
-                    KeyEvent.KEYCODE_DPAD_RIGHT -> if (index < cards.lastIndex) cards[index + 1].requestFocus() else true
-                    KeyEvent.KEYCODE_DPAD_UP -> top.getOrNull(index.coerceAtMost(top.lastIndex))?.requestFocus() ?: true
-                    else -> false
-                }
-            }
-            else -> false
         }
+        if (focused in bubbles) {
+            val index = bubbles.indexOf(focused)
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> if (index == 0) focusNavigationForCurrentSection() else bubbles[(index - 1 + bubbles.size) % bubbles.size].requestFocus()
+                KeyEvent.KEYCODE_DPAD_RIGHT -> bubbles[(index + 1) % bubbles.size].requestFocus()
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> center?.requestFocus() ?: true
+                else -> false
+            }
+        }
+        return false
     }
 
     private fun focusNavigation(index: Int): Boolean {
@@ -1086,154 +1045,180 @@ class MainActivity : Activity() {
         voiceMode = false
         radioDialog?.dismiss()
         homePanel.visibility = View.VISIBLE
-        homePanel.post { findViewById<View>(R.id.homeNavHome).requestFocus() }
-        findViewById<View>(R.id.sideNavigation).visibility = View.GONE
+        homePanel.post { orbitCenterCard?.requestFocus() }
+        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
         findViewById<View>(R.id.channelColumn).visibility = View.GONE
         findViewById<View>(R.id.previewScroll).visibility = View.GONE
         renderHomeHero()
     }
 
-    private var heroTypewriterRunnable: Runnable? = null
-    private var heroToneGenerator: android.media.ToneGenerator? = null
-
-    private fun stopHeroEffects() {
-        heroTypewriterRunnable?.let { mainHandler.removeCallbacks(it) }
-        heroTypewriterRunnable = null
-        runCatching { heroToneGenerator?.release() }
-        heroToneGenerator = null
-        homeHeroImage.clearAnimation()
-        homeHeroImage.animate().cancel()
+    private fun updateHomeClock() {
+        val now = java.util.Calendar.getInstance()
+        homeClockText.text = String.format("%02d:%02d", now.get(java.util.Calendar.HOUR_OF_DAY), now.get(java.util.Calendar.MINUTE))
+        val meses = listOf("Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez")
+        homeDateText.text = "${now.get(java.util.Calendar.DAY_OF_MONTH)} ${meses[now.get(java.util.Calendar.MONTH)]}"
     }
 
+    private data class OrbitCategory(val label: String, val sublabel: String, val icon: String, val color: Long, val action: () -> Unit)
+
+    // Constroi a tela inicial em formato de "orbita": um circulo central
+    // (destaque ao vivo) com bolhas de categoria distribuidas ao redor,
+    // conectadas por linhas -- inspirado na referencia visual enviada pelo
+    // usuario. Tudo calculado em pixels reais na tela, nao em XML fixo, pra
+    // se adaptar a qualquer tamanho de tela.
     private fun renderHomeHero() {
-        homeHeroImage.setImageResource(R.drawable.future_home_hero)
-        startHeroBackgroundAnimation()
-        homeHeroDescription.text = "Conteúdos selecionados para você assistir com qualidade e praticidade."
-        startHeroTypewriter("Aqui você encontra os melhores canais, filmes e séries")
-        renderHomeFeaturedCards()
+        updateHomeClock()
+        mainHandler.removeCallbacks(homeClockTicker)
+        mainHandler.post(homeClockTicker)
+        homeOrbitRoot.post { buildOrbit() }
     }
 
-    private fun startHeroBackgroundAnimation() {
-        homeHeroImage.clearAnimation()
-        homeHeroImage.scaleX = 1f
-        homeHeroImage.scaleY = 1f
-        homeHeroImage.translationX = 0f
-        // Efeito "Ken Burns": zoom e deslocamento lentos e continuos, dando
-        // sensacao de fundo vivo em vez de imagem estatica.
-        homeHeroImage.animate().cancel()
-        val zoom = android.animation.ObjectAnimator.ofFloat(homeHeroImage, "scaleX", 1f, 1.08f).apply {
-            duration = 12_000L
-            repeatMode = android.animation.ValueAnimator.REVERSE
-            repeatCount = android.animation.ValueAnimator.INFINITE
-        }
-        val zoomY = android.animation.ObjectAnimator.ofFloat(homeHeroImage, "scaleY", 1f, 1.08f).apply {
-            duration = 12_000L
-            repeatMode = android.animation.ValueAnimator.REVERSE
-            repeatCount = android.animation.ValueAnimator.INFINITE
-        }
-        val pan = android.animation.ObjectAnimator.ofFloat(homeHeroImage, "translationX", 0f, -30f).apply {
-            duration = 14_000L
-            repeatMode = android.animation.ValueAnimator.REVERSE
-            repeatCount = android.animation.ValueAnimator.INFINITE
-        }
-        zoom.start(); zoomY.start(); pan.start()
-    }
+    private fun buildOrbit() {
+        homeOrbitRoot.removeAllViews()
+        val w = homeOrbitRoot.width
+        val h = homeOrbitRoot.height
+        if (w <= 0 || h <= 0) return
+        val centerX = w / 2f
+        val centerY = h / 2f
+        val centerSize = dp(230)
 
-    // Escreve o titulo letra por letra, como numa maquina de escrever, com um
-    // clique curto e discreto a cada caractere (ToneGenerator, sem precisar
-    // de arquivo de audio).
-    private fun startHeroTypewriter(fullText: String) {
-        heroTypewriterRunnable?.let { mainHandler.removeCallbacks(it) }
-        homeHeroTitle.text = ""
-        var index = 0
-        val tone = runCatching {
-            android.media.ToneGenerator(android.media.AudioManager.STREAM_SYSTEM, 45).also { heroToneGenerator = it }
-        }.getOrNull()
-        val runnable = object : Runnable {
-            override fun run() {
-                if (index >= fullText.length) {
-                    tone?.release()
-                    heroToneGenerator = null
-                    return
-                }
-                index++
-                homeHeroTitle.text = fullText.substring(0, index)
-                val current = fullText[index - 1]
-                if (!current.isWhitespace()) {
-                    runCatching { tone?.startTone(android.media.ToneGenerator.TONE_PROP_BEEP, 12) }
-                }
-                mainHandler.postDelayed(this, 45L)
-            }
-        }
-        heroTypewriterRunnable = runnable
-        mainHandler.post(runnable)
-    }
-
-    // Cores meramente decorativas (não são os logos reais das marcas, só uma
-    // cor de fundo lembrando cada serviço) já que não temos os ícones oficiais
-    // no projeto.
-    private data class StreamingOption(val label: String, val color: Long, val icon: String, val keywords: List<String>)
-
-    private fun renderHomeStreamingRow() {
-        homeStreamingRow.removeAllViews()
-        val options = listOf(
-            StreamingOption("Disney+", 0xFF1DB4E8, "D+", listOf("disney")),
-            StreamingOption("Netflix", 0xFFE50914, "N", listOf("netflix")),
-            StreamingOption("Prime Video", 0xFF00A8E1, "PV", listOf("amazon", "prime")),
-            StreamingOption("Apple TV+", 0xFFAAAAAA, "TV", listOf("apple tv", "apple")),
-            StreamingOption("HBO Max", 0xFF8B5CF6, "HBO", listOf("hbo", "max")),
-            StreamingOption("Crunchyroll", 0xFFF47521, "CR", listOf("crunchyroll")),
-            StreamingOption("Animes", 0xFF8B5CF6, "AN", listOf("anime")),
-            StreamingOption("Animações", 0xFF16A34A, "★", listOf("animação", "animacao", "desenho", "infantil")),
+        val categories = listOf(
+            OrbitCategory("ESPORTE", "Conexão", "⚽", 0xFF2BFFB0) { openCategoryByKeywords(listOf("futebol", "esporte", "sport"), "Esporte") },
+            OrbitCategory("CINEMA", "Estrelas", "🎬", 0xFFF5B93D) { switchSection(MediaKind.MOVIE) },
+            OrbitCategory("SÉRIES", "Universo", "📺", 0xFF4FC3F7) { switchSection(MediaKind.SERIES) },
+            OrbitCategory("FAVORITOS", "Memórias", "♡", 0xFFFF6EA8) { switchSection(MediaKind.LIVE); favoritesOnly = true; renderCategories(); renderCatalog() },
+            OrbitCategory("RÁDIOS", "Melodia", "♪", 0xFFB388FF) { openRadios() },
+            OrbitCategory("KIDS", "Sonhos", "★", 0xFFFF8A50) { openCategoryByKeywords(listOf("kids", "infantil", "desenho", "animação", "animacao"), "Kids") },
         )
-        options.forEach { option ->
-            val circleSize = dp(76)
-            val innerSize = dp(66)
-            val badge = FrameLayout(this).apply {
-                layoutParams = LinearLayout.LayoutParams(circleSize, circleSize)
-                background = ovalDrawable(option.color)
+
+        // Centro: card grande com o conteudo em destaque (canal/filme mais assistido).
+        val center = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(centerSize, centerSize).apply {
+                leftMargin = (centerX - centerSize / 2f).toInt()
+                topMargin = (centerY - centerSize / 2f).toInt()
             }
-            val inner = TextView(this).apply {
-                text = option.icon
-                gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                textSize = 15f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-                background = ovalDrawable(0xFF0B0F1C)
-                layoutParams = FrameLayout.LayoutParams(innerSize, innerSize, Gravity.CENTER)
+            background = ovalDrawable(0xFF0A0A1F)
+            clipToOutline = true
+            isFocusable = true
+            isClickable = true
+        }
+        val centerImage = ImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setImageResource(R.drawable.future_home_hero)
+        }
+        val centerBadge = TextView(this).apply {
+            text = "AO VIVO"
+            setTextColor(Color.WHITE)
+            textSize = 10f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            background = rounded(0xFFE23B3B, 8f)
+            setPadding(dp(8), dp(3), dp(8), dp(3))
+            layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(14) }
+        }
+        val centerTitle = TextView(this).apply {
+            text = "Selecione um canal"
+            setTextColor(Color.WHITE)
+            textSize = 13f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            layoutParams = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(12), 0, dp(12), dp(16)) }
+        }
+        center.addView(centerImage)
+        center.addView(centerBadge)
+        center.addView(centerTitle)
+        center.setOnClickListener { switchSection(MediaKind.LIVE) }
+        center.foreground = ovalFocusRing()
+        homeOrbitRoot.addView(center)
+        orbitCenterCard = center
+
+        repository.mostRecent(MediaKind.LIVE, hiddenGroups()) { entry ->
+            if (entry != null) runOnUiThread {
+                centerTitle.text = entry.name
+                val source = entry.logoUrl.ifBlank { entry.backdropUrl }
+                if (source.isNotBlank()) imageLoader.load(source, centerImage, R.drawable.future_home_hero)
+                center.setOnClickListener { openFeaturedEntry(entry) }
             }
-            badge.addView(inner)
-            val caption = TextView(this).apply {
-                text = option.label
-                gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                textSize = 12f
-                setTypeface(typeface, android.graphics.Typeface.BOLD)
-                setPadding(0, dp(6), 0, 0)
-                layoutParams = LinearLayout.LayoutParams(dp(96), -2)
-            }
-            val card = LinearLayout(this).apply {
-                orientation = LinearLayout.VERTICAL
-                gravity = Gravity.CENTER_HORIZONTAL
+        }
+
+        // Bolhas ao redor, distribuidas em circulo.
+        val radius = (minOf(w, h) / 2f) - dp(90)
+        val bubbleSize = dp(64)
+        val points = mutableListOf<PointF>()
+        val bubbles = mutableListOf<View>()
+        categories.forEachIndexed { index, category ->
+            val angle = (Math.PI * 2 * index / categories.size) - Math.PI / 2
+            val bx = centerX + radius * Math.cos(angle).toFloat()
+            val by = centerY + radius * Math.sin(angle).toFloat()
+            points.add(PointF(bx, by))
+
+            val bubble = FrameLayout(this).apply {
+                layoutParams = FrameLayout.LayoutParams(bubbleSize, bubbleSize).apply {
+                    leftMargin = (bx - bubbleSize / 2f).toInt()
+                    topMargin = (by - bubbleSize / 2f).toInt()
+                }
+                background = ovalDrawable(category.color)
                 isFocusable = true
                 isClickable = true
-                layoutParams = LinearLayout.LayoutParams(dp(96), -2).apply { marginEnd = dp(14) }
-                setOnFocusChangeListener { view, hasFocus -> view.scaleX = if (hasFocus) 1.1f else 1f; view.scaleY = if (hasFocus) 1.1f else 1f }
-                setOnClickListener { openStreamingCategory(option) }
+                foreground = ovalFocusRing()
             }
-            card.addView(badge)
-            card.addView(caption)
-            homeStreamingRow.addView(card)
+            val icon = TextView(this).apply {
+                text = category.icon
+                gravity = Gravity.CENTER
+                textSize = 22f
+                layoutParams = FrameLayout.LayoutParams(-1, -1)
+            }
+            bubble.addView(icon)
+            bubble.setOnFocusChangeListener { view, hasFocus -> view.scaleX = if (hasFocus) 1.15f else 1f; view.scaleY = if (hasFocus) 1.15f else 1f }
+            bubble.setOnClickListener { category.action() }
+            homeOrbitRoot.addView(bubble)
+            bubbles.add(bubble)
+
+            val caption = TextView(this).apply {
+                text = "${category.sublabel}\n${category.label}"
+                gravity = Gravity.CENTER
+                setTextColor(Color.WHITE)
+                textSize = 10f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                layoutParams = FrameLayout.LayoutParams(dp(90), -2).apply {
+                    val captionAbove = by < centerY
+                    leftMargin = (bx - dp(45)).toInt()
+                    topMargin = if (captionAbove) (by - bubbleSize / 2f - dp(38)).toInt() else (by + bubbleSize / 2f + dp(4)).toInt()
+                }
+            }
+            homeOrbitRoot.addView(caption)
         }
+        orbitBubbles = bubbles
+        orbitLines.setPoints(PointF(centerX, centerY), points)
     }
 
-    private fun openStreamingCategory(option: StreamingOption) {
+    private fun ovalFocusRing(): android.graphics.drawable.Drawable {
+        val selector = android.graphics.drawable.StateListDrawable()
+        val focused = GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(3), Color.WHITE) }
+        selector.addState(intArrayOf(android.R.attr.state_focused), focused)
+        selector.addState(intArrayOf(), GradientDrawable().apply { shape = GradientDrawable.OVAL })
+        return selector
+    }
+
+    private fun openRadios() {
+        radioMode = true
+        homeMode = false
+        homePanel.visibility = View.GONE
+        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
+        findViewById<View>(R.id.channelColumn).visibility = View.VISIBLE
+        findViewById<View>(R.id.previewScroll).visibility = View.VISIBLE
+        renderCategories()
+        renderCatalog()
+        selectFirstVisible()
+    }
+
+    private fun openCategoryByKeywords(keywords: List<String>, label: String) {
         if (!databaseBackedCatalog) { Toast.makeText(this, "Catálogo ainda carregando, tente novamente em instantes.", Toast.LENGTH_SHORT).show(); return }
         val hidden = hiddenGroups()
         fun tryKind(kind: MediaKind, onMiss: () -> Unit) {
             repository.queryGroups(kind, hidden, includeAdult = false) { groups ->
                 runOnUiThread {
-                    val match = groups.firstOrNull { group -> option.keywords.any { keyword -> group.contains(keyword, ignoreCase = true) } }
+                    val match = groups.firstOrNull { group -> keywords.any { keyword -> group.contains(keyword, ignoreCase = true) } }
                     if (match != null) {
                         switchSection(kind, autoSelectFirst = false)
                         selectedCategory = match
@@ -1246,65 +1231,15 @@ class MainActivity : Activity() {
                 }
             }
         }
-        tryKind(MediaKind.SERIES) {
-            tryKind(MediaKind.MOVIE) {
-                Toast.makeText(this, "Nenhuma categoria de \"${option.label}\" encontrada no seu catálogo.", Toast.LENGTH_SHORT).show()
+        tryKind(MediaKind.MOVIE) {
+            tryKind(MediaKind.SERIES) {
+                val message = if (catalogImportInProgress) {
+                    "Ainda carregando \"$label\" (o catálogo está sendo importado) — tente de novo em alguns segundos."
+                } else {
+                    "Nenhuma categoria de \"$label\" encontrada no seu catálogo."
+                }
+                Toast.makeText(this, message, Toast.LENGTH_LONG).show()
             }
-        }
-    }
-
-    private fun renderHomeFeaturedCards() {
-        if (!databaseBackedCatalog) return
-        val hidden = hiddenGroups()
-        val movieKeywords = listOf("lançamento", "lancamento", "animação", "animacao", "desenho")
-        val seriesKeywords = listOf("lançamento", "lancamento", "novidade")
-        repository.mostRecentInGroups(MediaKind.MOVIE, movieKeywords, hidden) { fromGroup ->
-            if (fromGroup != null) {
-                applyFeaturedMovie(fromGroup)
-            } else {
-                repository.mostRecent(MediaKind.MOVIE, hidden) { entry -> if (entry != null) applyFeaturedMovie(entry) }
-            }
-        }
-        repository.mostRecentInGroups(MediaKind.SERIES, seriesKeywords, hidden) { fromGroup ->
-            if (fromGroup != null) {
-                applyFeaturedSeries(fromGroup)
-            } else {
-                repository.mostRecent(MediaKind.SERIES, hidden) { entry -> if (entry != null) applyFeaturedSeries(entry) }
-            }
-        }
-        val watchedKey = mostWatchedChannelKey()
-        if (watchedKey == null) {
-            homeCartoonsCardBadge.text = "DESENHOS EM DESTAQUE"
-            homeCartoonsCardTitle.text = "Desenhos em destaque"
-            mostWatchedEntry = null
-            return
-        }
-        repository.byKey(watchedKey) { entry ->
-            runOnUiThread {
-                if (!homeMode || entry == null) return@runOnUiThread
-                mostWatchedEntry = entry
-                homeCartoonsCardBadge.text = "CANAL MAIS ASSISTIDO"
-                homeCartoonsCardTitle.text = entry.name
-                imageLoader.load(entry.logoUrl, homeCartoonsCardImage, R.drawable.home_cartoons_card)
-            }
-        }
-    }
-
-    private fun applyFeaturedMovie(entry: CatalogEntry) {
-        runOnUiThread {
-            if (!homeMode) return@runOnUiThread
-            featuredMovie = entry
-            homeMoviesCardTitle.text = entry.name
-            imageLoader.load(entry.backdropUrl.ifBlank { entry.logoUrl }, homeMoviesCardImage, R.drawable.home_movies_card)
-        }
-    }
-
-    private fun applyFeaturedSeries(entry: CatalogEntry) {
-        runOnUiThread {
-            if (!homeMode) return@runOnUiThread
-            featuredSeries = entry
-            homeSeriesCardTitle.text = seriesTitle(entry)
-            imageLoader.load(entry.backdropUrl.ifBlank { entry.logoUrl }, homeSeriesCardImage, R.drawable.home_series_card)
         }
     }
 
@@ -1362,7 +1297,6 @@ class MainActivity : Activity() {
         stopMiniPlayer()
         selectedEntry = null
         clearPreviewForSection(kind)
-        stopHeroEffects()
         homeMode = false
         homePanel.visibility = View.GONE
         findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
@@ -1405,7 +1339,6 @@ class MainActivity : Activity() {
         clearPreviewForSection(MediaKind.LIVE)
         vodSection.visibility = View.GONE
         vodCards.removeAllViews()
-        stopHeroEffects()
         homeMode = false
         homePanel.visibility = View.GONE
         findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
@@ -3603,7 +3536,6 @@ class MainActivity : Activity() {
         radioMode = true
         voiceMode = false
         favoritesOnly = false
-        stopHeroEffects()
         homeMode = false
         seriesEpisodesDialog?.dismiss()
         seriesSeasonsDialog?.dismiss()
