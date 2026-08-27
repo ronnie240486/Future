@@ -1092,6 +1092,17 @@ class MainActivity : Activity() {
         )
 
         // Centro: card grande com o conteudo em destaque (canal/filme mais assistido).
+        listOf(1.25f to 25, 1.1f to 45).forEach { (scale, alpha) ->
+            val size = (centerSize * scale).toInt()
+            val halo = View(this).apply {
+                background = ovalDrawable((alpha.toLong() shl 24) or 0x7B61FF)
+                layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                    leftMargin = (centerX - size / 2f).toInt()
+                    topMargin = (centerY - size / 2f).toInt()
+                }
+            }
+            homeOrbitRoot.addView(halo)
+        }
         val center = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(centerSize, centerSize).apply {
                 leftMargin = (centerX - centerSize / 2f).toInt()
@@ -1114,7 +1125,7 @@ class MainActivity : Activity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             background = rounded(0xFFE23B3B, 8f)
             setPadding(dp(8), dp(3), dp(8), dp(3))
-            layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(14) }
+            layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(42) }
         }
         val centerTitle = TextView(this).apply {
             text = "Selecione um canal"
@@ -1152,12 +1163,25 @@ class MainActivity : Activity() {
             val by = centerY + radius * Math.sin(angle).toFloat()
             points.add(PointF(bx, by))
 
+            val haloSize = (bubbleSize * 1.5f).toInt()
+            listOf(0.9f to 20, 0.65f to 40).forEach { (scale, alpha) ->
+                val size = (haloSize * scale).toInt()
+                val halo = View(this).apply {
+                    background = ovalDrawable((alpha.toLong() shl 24) or (category.color and 0xFFFFFF))
+                    layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                        leftMargin = (bx - size / 2f).toInt()
+                        topMargin = (by - size / 2f).toInt()
+                    }
+                }
+                homeOrbitRoot.addView(halo)
+            }
+
             val bubble = FrameLayout(this).apply {
                 layoutParams = FrameLayout.LayoutParams(bubbleSize, bubbleSize).apply {
                     leftMargin = (bx - bubbleSize / 2f).toInt()
                     topMargin = (by - bubbleSize / 2f).toInt()
                 }
-                background = ovalDrawable(category.color)
+                background = ovalGlassDrawable(category.color)
                 isFocusable = true
                 isClickable = true
                 foreground = ovalFocusRing()
@@ -3932,6 +3956,24 @@ class MainActivity : Activity() {
     private fun ovalDrawable(color: Long): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(Color.argb((color shr 24 and 0xFF).toInt(), (color shr 16 and 0xFF).toInt(), (color shr 8 and 0xFF).toInt(), (color and 0xFF).toInt()))
+    }
+
+    // Efeito "vidro/brilho" pras bolhas da orbita: gradiente radial claro no
+    // canto superior-esquerdo esmaecendo pra cor base, mais um contorno claro
+    // fino simulando reflexo de vidro -- em vez de uma cor solida chapada.
+    private fun ovalGlassDrawable(color: Long): GradientDrawable {
+        val r = (color shr 16 and 0xFF).toInt()
+        val g = (color shr 8 and 0xFF).toInt()
+        val b = (color and 0xFF).toInt()
+        val light = Color.argb(235, minOf(255, r + 90), minOf(255, g + 90), minOf(255, b + 90))
+        val base = Color.argb(255, r, g, b)
+        return GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(light, base)).apply {
+            shape = GradientDrawable.OVAL
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            gradientRadius = dp(70).toFloat()
+            setGradientCenter(0.3f, 0.25f)
+            setStroke(dp(2), Color.argb(140, 255, 255, 255))
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
