@@ -15,6 +15,7 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
 
     private val rows = mutableListOf<LinearLayout>()
     private var focusedIndex = 0
+    private var lastRowHeight = 0
     private val visualPanel = View(context).apply {
         // Fundo branco desenhado no Android, não uma captura estática.
         background = SidebarWhitePanelDrawable()
@@ -123,6 +124,7 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
         // cápsulas começam abaixo dele, dentro do painel branco.
         val top = (height * 0.14f).toInt()
         val rowHeight = (height * 0.14f).toInt()
+        lastRowHeight = rowHeight
         val gap = (height * 0.025f).toInt()
         val leftInset = (width * 0.055f).toInt()
         // O ponto mais estreito do painel branco (SidebarWhitePanelDrawable)
@@ -139,6 +141,7 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
                 row.layoutParams = params
             }
         }
+        updateRows()
     }
 
     fun firstTabId(): Int = rows.firstOrNull()?.id ?: View.NO_ID
@@ -178,9 +181,11 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
     }
 
     private fun tabBackground(selected: Boolean, hasFocus: Boolean): GradientDrawable = GradientDrawable().apply {
-        // Cápsula nativa sobre o painel branco; não há hotspot invisível.
+        // Metade da altura real da linha = formato "comprimido" (estádio)
+        // de verdade, nao so um leve arredondado nos cantos -- um raio fixo
+        // pequeno demais pra altura da capsula deixava as pontas quase retas.
         setColor(if (hasFocus) Color.rgb(38, 70, 122) else Color.rgb(9, 25, 60))
-        cornerRadius = dp(26).toFloat()
+        cornerRadius = if (lastRowHeight > 0) lastRowHeight / 2f else dp(26).toFloat()
         setStroke(if (hasFocus) dp(2) else dp(1), Color.WHITE)
     }
 
