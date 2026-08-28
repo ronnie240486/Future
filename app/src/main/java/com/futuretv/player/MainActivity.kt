@@ -2328,7 +2328,18 @@ class MainActivity : Activity() {
             OrbitCategory("KIDS", "Sonhos", R.drawable.orbit_icon_kids, 0xFFFF8A50) { openCategoryByKeywords(listOf("kids", "infantil", "desenho", "animação", "animacao"), "Kids") },
         )
 
-        // Centro: esfera de conteúdo em destaque, com anel translúcido e leitura em camadas.
+        // Centro: halos em camadas do remoto, mais o anel translúcido local.
+        listOf(1.25f to 25, 1.1f to 45).forEach { (scale, alpha) ->
+            val size = (centerSize * scale).toInt()
+            val halo = View(this).apply {
+                background = ovalDrawable((alpha.toLong() shl 24) or 0x7B61FF)
+                layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                    leftMargin = (centerX - size / 2f).toInt()
+                    topMargin = (centerY - size / 2f).toInt()
+                }
+            }
+            homeOrbitRoot.addView(halo)
+        }
         val centerHalo = View(this).apply {
             layoutParams = FrameLayout.LayoutParams(centerHaloSize, centerHaloSize).apply {
                 leftMargin = (centerX - centerHaloSize / 2f).toInt()
@@ -2342,7 +2353,6 @@ class MainActivity : Activity() {
             alpha = 0.9f
         }
         homeOrbitRoot.addView(centerHalo)
-
         val center = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(centerSize, centerSize).apply {
                 leftMargin = (centerX - centerSize / 2f).toInt()
@@ -2370,7 +2380,7 @@ class MainActivity : Activity() {
             setTypeface(typeface, android.graphics.Typeface.BOLD)
             background = rounded(0xFFE23B3B, 8f)
             setPadding(dp(8), dp(3), dp(8), dp(3))
-            layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(14) }
+            layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply { topMargin = dp(42) }
         }
         val centerTitle = TextView(this).apply {
             text = "Selecione um canal"
@@ -2415,12 +2425,25 @@ class MainActivity : Activity() {
             val by = centerY + radius * Math.sin(angle).toFloat()
             points.add(PointF(bx, by))
 
+            val haloSize = (bubbleSize * 1.5f).toInt()
+            listOf(0.9f to 20, 0.65f to 40).forEach { (scale, alpha) ->
+                val size = (haloSize * scale).toInt()
+                val halo = View(this).apply {
+                    background = ovalDrawable((alpha.toLong() shl 24) or (category.color and 0xFFFFFF))
+                    layoutParams = FrameLayout.LayoutParams(size, size).apply {
+                        leftMargin = (bx - size / 2f).toInt()
+                        topMargin = (by - size / 2f).toInt()
+                    }
+                }
+                homeOrbitRoot.addView(halo)
+            }
+
             val bubble = FrameLayout(this).apply {
                 layoutParams = FrameLayout.LayoutParams(bubbleSize, bubbleSize).apply {
                     leftMargin = (bx - bubbleSize / 2f).toInt()
                     topMargin = (by - bubbleSize / 2f).toInt()
                 }
-                background = orbitalBubbleDrawable(category.color)
+                background = ovalGlassDrawable(category.color)
                 isFocusable = true
                 isClickable = true
                 foreground = ovalFocusRing()
@@ -5838,6 +5861,22 @@ class MainActivity : Activity() {
         ).apply {
             shape = GradientDrawable.OVAL
             setStroke(dp(1), 0x72EAF2FF.toInt())
+        }
+    }
+
+    // Efeito de vidro/brilho preservado do commit remoto.
+    private fun ovalGlassDrawable(color: Long): GradientDrawable {
+        val r = (color shr 16 and 0xFF).toInt()
+        val g = (color shr 8 and 0xFF).toInt()
+        val b = (color and 0xFF).toInt()
+        val light = Color.argb(235, minOf(255, r + 90), minOf(255, g + 90), minOf(255, b + 90))
+        val base = Color.argb(255, r, g, b)
+        return GradientDrawable(GradientDrawable.Orientation.TL_BR, intArrayOf(light, base)).apply {
+            shape = GradientDrawable.OVAL
+            gradientType = GradientDrawable.RADIAL_GRADIENT
+            gradientRadius = dp(70).toFloat()
+            setGradientCenter(0.3f, 0.25f)
+            setStroke(dp(2), Color.argb(140, 255, 255, 255))
         }
     }
 
