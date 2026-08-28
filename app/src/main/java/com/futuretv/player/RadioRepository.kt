@@ -21,6 +21,8 @@ data class RadioStation(
 
 class RadioRepository(private val context: Context) {
     private val assetFiles = listOf(
+        // Catálogo completo gerado a partir da fonte pública de rádios brasileiras.
+        "radio_stations_radio_browser.csv",
         "radio_stations_nacionais.csv",
         "radio_stations.csv",
         "radio_stations_gospel.csv",

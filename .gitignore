@@ -10,3 +10,10 @@
 app/build
 artifacts
 assets
+
+# Build and preview deliveries are kept locally, not versioned with the source.
+/*.apk
+/*.zip
+/preview/
+/*_preview.jpg
+/*_preview.png

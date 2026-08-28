@@ -11,7 +11,9 @@ import android.speech.RecognizerIntent
 import android.graphics.Color
 import android.graphics.PointF
 import android.graphics.RectF
+import android.graphics.drawable.ColorDrawable
 import android.graphics.drawable.GradientDrawable
+import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
@@ -20,6 +22,7 @@ import android.view.Gravity
 import android.view.KeyEvent
 import android.view.View
 import android.view.ViewGroup
+import android.view.ViewOutlineProvider
 import android.view.Window
 import android.view.WindowManager
 import android.widget.CheckBox
@@ -48,7 +51,14 @@ import java.security.MessageDigest
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+import org.json.JSONArray
 import org.json.JSONObject
+
+private data class UserProfile(
+    val id: String,
+    val name: String,
+    val avatar: Int,
+)
 
 private data class ChannelEditorial(
     val eyebrow: String,
@@ -63,12 +73,14 @@ private data class ChannelEditorial(
 class MainActivity : Activity() {
     private enum class PreviewMode { NONE, TRAILER, CONTENT }
     private enum class PreviewScale(val label: String) { NORMAL("NORMAL"), STRETCH("ESTICAR"), ZOOM("ZOOM") }
+    private enum class HomeSeriesCategory { DORAMAS, TURKISH_NOVELAS, NOVELAS, REELSHORTS, ANIMES }
 
     private val pageSize = 120
     private lateinit var channelList: RecyclerView
     private lateinit var videoPreview: FrameLayout
     private lateinit var previewScroll: ScrollView
     private lateinit var categoryList: LinearLayout
+    private lateinit var sortRow: LinearLayout
     private lateinit var sortRecentButton: TextView
     private lateinit var sortAlphaButton: TextView
     private lateinit var sortRatingButton: TextView
@@ -107,18 +119,69 @@ class MainActivity : Activity() {
     private lateinit var vodTitle: TextView
     private lateinit var homePanel: View
     private lateinit var homeOrbitRoot: FrameLayout
+    private lateinit var homeSidebarTabs: HomeSidebarTabsView
+    private lateinit var constellationTransition: ConstellationTransitionView
+    private var constellationSound: MediaPlayer? = null
+    private lateinit var homeUserHeader: View
+    private lateinit var homeProfileImage: ImageView
+    private lateinit var homeUserName: TextView
+    private lateinit var internalShell: FrameLayout
+    private lateinit var internalContent: LinearLayout
+    private var internalShellInstalled = false
+    private var cacheRestoreInFlight = false
+    private var internalClockText: TextView? = null
+    private var internalDateText: TextView? = null
     private lateinit var orbitLines: OrbitLinesView
     private lateinit var homeClockText: TextView
     private lateinit var homeDateText: TextView
     private var orbitCenterCard: FrameLayout? = null
     private var orbitBubbles: List<View> = emptyList()
+    private var orbitSatelliteGroups: List<List<View>> = emptyList()
+    private var orbitSatelliteParents: Map<View, View> = emptyMap()
     private val homeClockTicker = object : Runnable {
         override fun run() {
             updateHomeClock()
-            if (homeMode) mainHandler.postDelayed(this, 30_000)
+            if (homeMode) {
+                advanceHomeRotation()
+                mainHandler.postDelayed(this, 4_000)
+            }
         }
     }
+    private var homeRotationEntries: List<CatalogEntry> = emptyList()
+    private var homeRotationIndex = 0
     private var homeMode = false
+    private var settingsMode = false
+    private var settingsPanel: View? = null
+    private var homeFeaturedKey: String? = null
+    private var exactHomeHotspots: List<View> = emptyList()
+    private var exactHomeBadge: TextView? = null
+    private var exactHomeProgramTitle: TextView? = null
+    private var exactHomeProgramMeta: TextView? = null
+    private var exactHomeChannelLogo: ImageView? = null
+    private var exactHomeProgramEntry: CatalogEntry? = null
+    private var homeRotationRequestId = 0
+    private var activeProfileId = ""
+    private var profileDialog: Dialog? = null
+    private var activeProfileName = "SELECIONE UM PERFIL"
+    private var activeProfileAvatar = 0
+    private val profileAvatarAssets by lazy {
+        listOf(
+            R.drawable.profile_avatar_1, R.drawable.profile_avatar_2, R.drawable.profile_avatar_3, R.drawable.profile_avatar_4,
+            R.drawable.profile_avatar_5, R.drawable.profile_avatar_6, R.drawable.profile_avatar_7, R.drawable.profile_avatar_8,
+            R.drawable.profile_avatar_9, R.drawable.profile_avatar_10, R.drawable.profile_avatar_11, R.drawable.profile_avatar_12,
+            R.drawable.profile_avatar_14, R.drawable.profile_avatar_15, R.drawable.profile_avatar_16, R.drawable.profile_avatar_17,
+            R.drawable.profile_avatar_18, R.drawable.profile_avatar_19, R.drawable.profile_avatar_20, R.drawable.profile_avatar_21,
+            R.drawable.profile_avatar_22, R.drawable.profile_avatar_23, R.drawable.profile_avatar_24, R.drawable.profile_avatar_25,
+            R.drawable.profile_avatar_26, R.drawable.profile_avatar_27, R.drawable.profile_avatar_28, R.drawable.profile_avatar_29,
+            R.drawable.profile_avatar_30, R.drawable.profile_avatar_31, R.drawable.profile_avatar_32, R.drawable.profile_avatar_34,
+            R.drawable.profile_avatar_35,
+            R.drawable.profile_kid_avatar_1, R.drawable.profile_kid_avatar_2, R.drawable.profile_kid_avatar_3,
+            R.drawable.profile_kid_avatar_4, R.drawable.profile_kid_avatar_5, R.drawable.profile_kid_avatar_6,
+            R.drawable.profile_kid_avatar_7,
+        )
+    }
+    private var trailerFocusEntryKey: String? = null
+    private var trailerFocusToken = 0
     private var miniPlayer: ExoPlayer? = null
     private var miniPlayerView: PlayerView? = null
     private var miniPlayerEntryKey: String? = null
@@ -271,14 +334,34 @@ class MainActivity : Activity() {
             SortMode.valueOf(getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).getString(PREF_SORT_ALPHA, SortMode.RECENT.name) ?: SortMode.RECENT.name)
         }.getOrDefault(SortMode.RECENT)
         bindViews()
+        installConstellationTransition()
+        installInternalShell()
         setupCatalogList()
-        renderNavigation()
-        renderCategories()
-        renderCatalog()
-        selectedEntry = catalog.entries.firstOrNull()
-        selectedEntry?.let { selectEntry(it, false) }
-        window.decorView.post { if (currentFocus == null) focusNavigationForCurrentSection() }
+        showHome()
         loadRemoteConfiguration()
+    }
+
+    private fun installConstellationTransition() {
+        val content = findViewById<FrameLayout>(android.R.id.content)
+        constellationTransition = ConstellationTransitionView(this)
+        content.addView(constellationTransition, FrameLayout.LayoutParams(-1, -1))
+    }
+
+    private fun playConstellationTransition() {
+        if (transitionStarsEnabled() && ::constellationTransition.isInitialized) constellationTransition.play()
+        if (!transitionSoundEnabled()) {
+            constellationSound?.let { sound -> if (sound.isPlaying) sound.pause(); sound.seekTo(0) }
+            return
+        }
+        runCatching {
+            val player = constellationSound ?: MediaPlayer.create(this, R.raw.benkirb_shine_7_268909)?.also {
+                it.setVolume(0.82f, 0.82f)
+                it.setOnCompletionListener { completed -> completed.seekTo(0) }
+            }?.also { constellationSound = it }
+            player?.let {
+                if (it.isPlaying) it.seekTo(0) else it.start()
+            }
+        }
     }
 
     private fun bindViews() {
@@ -290,6 +373,7 @@ class MainActivity : Activity() {
         videoPreview = findViewById(R.id.videoPreview)
         previewScroll = findViewById(R.id.previewScroll)
         categoryList = findViewById(R.id.categoryList)
+        sortRow = findViewById(R.id.sortRow)
         sortRecentButton = findViewById(R.id.sortRecentButton)
         sortAlphaButton = findViewById(R.id.sortAlphaButton)
         sortRatingButton = findViewById(R.id.sortRatingButton)
@@ -343,6 +427,38 @@ class MainActivity : Activity() {
         vodTitle = findViewById(R.id.vodTitle)
         homePanel = findViewById(R.id.homePanel)
         homeOrbitRoot = findViewById(R.id.homeOrbitRoot)
+        homeSidebarTabs = HomeSidebarTabsView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(dp(190), -1, Gravity.START)
+            setTabs(listOf(
+                HomeSidebarTabsView.Tab("DORAMAS", R.drawable.home_sidebar_icon_doramas) { openHomeSeriesCategory(HomeSeriesCategory.DORAMAS) },
+                HomeSidebarTabsView.Tab("NOVELAS TURCAS", R.drawable.home_sidebar_icon_turkish_novelas) { openHomeSeriesCategory(HomeSeriesCategory.TURKISH_NOVELAS) },
+                HomeSidebarTabsView.Tab("NOVELAS", R.drawable.home_sidebar_icon_novelas) { openHomeSeriesCategory(HomeSeriesCategory.NOVELAS) },
+                HomeSidebarTabsView.Tab("REELSHORTS", R.drawable.home_sidebar_icon_reelshorts) { openHomeSeriesCategory(HomeSeriesCategory.REELSHORTS) },
+                HomeSidebarTabsView.Tab("ANIMES", R.drawable.home_sidebar_icon_animes) { openHomeSeriesCategory(HomeSeriesCategory.ANIMES) },
+            ))
+        }
+        (homePanel as? ViewGroup)?.addView(homeSidebarTabs)
+        homeUserHeader = findViewById(R.id.homeUserHeader)
+        homeProfileImage = findViewById(R.id.homeProfileImage)
+        homeUserName = findViewById(R.id.homeUserName)
+        homeProfileImage.background = ovalBackground(0x553B6A9C)
+        homeProfileImage.outlineProvider = ViewOutlineProvider.BACKGROUND
+        homeProfileImage.clipToOutline = true
+        homeUserHeader.isFocusable = true
+        // O container só participa do foco do D-pad. O clique do perfil fica
+        // restrito ao avatar, para nunca cobrir uma aba da sidebar.
+        homeUserHeader.isClickable = false
+        homeUserHeader.contentDescription = "Cabeçalho do perfil"
+        homeProfileImage.isClickable = true
+        homeProfileImage.isFocusable = true
+        homeProfileImage.contentDescription = "Trocar perfil"
+        homeProfileImage.setOnClickListener { showProfileDialog() }
+        homeUserHeader.setOnFocusChangeListener { view, hasFocus ->
+            view.alpha = if (hasFocus) 1f else 0.94f
+            view.background = rounded(if (hasFocus) 0x553D79AA else 0x00000000, 18f)
+        }
+        loadActiveProfile()
+        updateProfileHeader()
         orbitLines = findViewById(R.id.orbitLines)
         homeClockText = findViewById(R.id.homeClockText)
         homeDateText = findViewById(R.id.homeDateText)
@@ -454,6 +570,7 @@ class MainActivity : Activity() {
             else -> false
         }
         if (homeMode) return moveHomeDpad(focused, keyCode)
+        if (settingsMode) return moveSettingsDpad(focused, keyCode)
 
         if (focused === searchHint) {
             return when (keyCode) {
@@ -484,7 +601,7 @@ class MainActivity : Activity() {
                 KeyEvent.KEYCODE_DPAD_LEFT -> focusNavigationForCurrentSection()
                 KeyEvent.KEYCODE_DPAD_RIGHT -> focusFirstCategory()
                 KeyEvent.KEYCODE_DPAD_UP -> searchHint.requestFocus()
-                KeyEvent.KEYCODE_DPAD_DOWN -> focusFirstCatalogItem()
+                KeyEvent.KEYCODE_DPAD_DOWN -> focusFirstSortButton() || focusFirstCatalogItem()
                 else -> false
             }
         }
@@ -502,8 +619,18 @@ class MainActivity : Activity() {
                     }
                     if (index <= 0) focusNavigationForCurrentSection() else focusCategoryAt(index - 1)
                 }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (index >= categoryList.childCount - 1) focusFirstCatalogItem() else focusCategoryAt(index + 1)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (index >= categoryList.childCount - 1) focusFirstSortButton() || focusFirstCatalogItem() else focusCategoryAt(index + 1)
                 KeyEvent.KEYCODE_DPAD_UP -> searchHint.requestFocus()
+                KeyEvent.KEYCODE_DPAD_DOWN -> focusFirstSortButton() || focusFirstCatalogItem()
+                else -> false
+            }
+        }
+        if (isWithin(focused, sortRow)) {
+            val index = sortRow.indexOfChild(focused)
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> if (index <= 1) focusFirstCategory() else sortRow.getChildAt(index - 1).requestFocus()
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (index >= sortRow.childCount - 1) focusFirstCatalogItem() else sortRow.getChildAt(index + 1).requestFocus()
+                KeyEvent.KEYCODE_DPAD_UP -> focusFirstCategory()
                 KeyEvent.KEYCODE_DPAD_DOWN -> focusFirstCatalogItem()
                 else -> false
             }
@@ -514,7 +641,7 @@ class MainActivity : Activity() {
             return when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> focusFirstCategory() || focusNavigationForCurrentSection()
                 KeyEvent.KEYCODE_DPAD_RIGHT -> focusPreview() || focusFirstAction()
-                KeyEvent.KEYCODE_DPAD_UP -> if (position <= 0) focusFirstCategory() || searchHint.requestFocus() else moveCatalogFocus(-1)
+                KeyEvent.KEYCODE_DPAD_UP -> if (position <= 0) focusFirstSortButton() || focusFirstCategory() || searchHint.requestFocus() else moveCatalogFocus(-1)
                 KeyEvent.KEYCODE_DPAD_DOWN -> moveCatalogFocus(1)
                 else -> false
             }
@@ -591,7 +718,56 @@ class MainActivity : Activity() {
         return false
     }
 
+    private fun moveSettingsDpad(focused: View, keyCode: Int): Boolean {
+        val panel = settingsPanel
+        val navRow = navigationRowForFocus(focused)
+        if (navRow != null || isWithin(focused, findViewById(R.id.sideNavigation))) {
+            val index = navRow?.let { navItems.indexOfChild(it) } ?: (0 until navItems.childCount)
+                .firstOrNull { isNavigationSelected(navItems.getChildAt(it).tag as? String ?: "") }
+                ?.coerceAtLeast(0)
+                ?: 0
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> if (navRow != null) focusNavigation(index - 1) else true
+                KeyEvent.KEYCODE_DPAD_DOWN -> if (navRow != null) focusNavigation(index + 1) else focusNavigation(index)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> focusFirstSettingsOption()
+                KeyEvent.KEYCODE_DPAD_LEFT -> true
+                else -> false
+            }
+        }
+        if (panel != null && isWithin(focused, panel)) {
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> focusNavigationForCurrentSection()
+                KeyEvent.KEYCODE_DPAD_RIGHT -> true
+                else -> false
+            }
+        }
+        return false
+    }
+
     private fun moveHomeDpad(focused: View, keyCode: Int): Boolean {
+        if (::homeSidebarTabs.isInitialized && homeSidebarTabs.ownsFocus(focused)) {
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    if (homeSidebarTabs.focusedTabIndex() == 0) homeUserHeader.requestFocus() else homeSidebarTabs.moveFocus(-1)
+                    true
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> homeSidebarTabs.moveFocus(1)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> exactHomeHotspots.firstOrNull()?.requestFocus() ?: true
+                KeyEvent.KEYCODE_DPAD_LEFT -> true
+                else -> false
+            }
+        }
+        if (focused === homeUserHeader) {
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (::homeSidebarTabs.isInitialized && homeSidebarTabs.firstTabId() != View.NO_ID) homeSidebarTabs.focusFirstTab() else exactHomeHotspots.firstOrNull()?.requestFocus()
+                    true
+                }
+                KeyEvent.KEYCODE_DPAD_LEFT, KeyEvent.KEYCODE_DPAD_UP -> true
+                else -> false
+            }
+        }
+        if (focused in exactHomeHotspots) return moveExactHomeHotspot(focused, keyCode)
         val center = orbitCenterCard
         val bubbles = orbitBubbles
         if (focused === center) {
@@ -603,14 +779,75 @@ class MainActivity : Activity() {
         }
         if (focused in bubbles) {
             val index = bubbles.indexOf(focused)
+            val satellites = orbitSatelliteGroups.getOrNull(index).orEmpty()
             return when (keyCode) {
                 KeyEvent.KEYCODE_DPAD_LEFT -> if (index == 0) focusNavigationForCurrentSection() else bubbles[(index - 1 + bubbles.size) % bubbles.size].requestFocus()
-                KeyEvent.KEYCODE_DPAD_RIGHT -> bubbles[(index + 1) % bubbles.size].requestFocus()
+                KeyEvent.KEYCODE_DPAD_RIGHT -> satellites.firstOrNull()?.requestFocus() ?: bubbles[(index + 1) % bubbles.size].requestFocus()
                 KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> center?.requestFocus() ?: true
                 else -> false
             }
         }
+        val parent = orbitSatelliteParents[focused]
+        if (parent != null) {
+            val group = orbitSatelliteGroups.firstOrNull { parent in it || it.isNotEmpty() && orbitSatelliteParents[it.first()] === parent }.orEmpty()
+            val index = group.indexOf(focused)
+            return when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> parent.requestFocus()
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (index >= 0 && group.isNotEmpty()) group[(index + 1) % group.size].requestFocus() else parent.requestFocus()
+                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> parent.requestFocus()
+                else -> false
+            }
+        }
         return false
+    }
+
+    private fun moveExactHomeHotspot(focused: View, keyCode: Int): Boolean {
+        val source = focused.layoutParams as? FrameLayout.LayoutParams ?: return false
+        val sourceX = source.leftMargin + focused.width / 2f
+        val sourceY = source.topMargin + focused.height / 2f
+        val candidates = exactHomeHotspots.filter { it !== focused && it.isShown && it.isEnabled }
+        val target = candidates.mapNotNull { candidate ->
+            val params = candidate.layoutParams as? FrameLayout.LayoutParams ?: return@mapNotNull null
+            val dx = params.leftMargin + candidate.width / 2f - sourceX
+            val dy = params.topMargin + candidate.height / 2f - sourceY
+            val primary: Float
+            val secondary: Float
+            when (keyCode) {
+                KeyEvent.KEYCODE_DPAD_LEFT -> {
+                    if (dx >= -dp(8)) return@mapNotNull null
+                    primary = -dx
+                    secondary = kotlin.math.abs(dy)
+                }
+                KeyEvent.KEYCODE_DPAD_RIGHT -> {
+                    if (dx <= dp(8)) return@mapNotNull null
+                    primary = dx
+                    secondary = kotlin.math.abs(dy)
+                }
+                KeyEvent.KEYCODE_DPAD_UP -> {
+                    if (dy >= -dp(8)) return@mapNotNull null
+                    primary = -dy
+                    secondary = kotlin.math.abs(dx)
+                }
+                KeyEvent.KEYCODE_DPAD_DOWN -> {
+                    if (dy <= dp(8)) return@mapNotNull null
+                    primary = dy
+                    secondary = kotlin.math.abs(dx)
+                }
+                else -> return@mapNotNull null
+            }
+            candidate to (primary + secondary * 0.42f)
+        }.minByOrNull { it.second }?.first
+        if (target != null) {
+            target.requestFocus()
+            return true
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_UP && sourceY <= homeUserHeader.height + dp(80)) {
+            homeUserHeader.requestFocus()
+            return true
+        }
+        // Consome a direção nas bordas para não deixar o Android saltar para
+        // uma view invisível ou para fora da composição orbital.
+        return true
     }
 
     private fun focusNavigation(index: Int): Boolean {
@@ -645,11 +882,20 @@ class MainActivity : Activity() {
     }
 
     private fun focusFirstCategory(): Boolean {
+        if (!categoryList.isShown || (categoryList.parent as? View)?.isShown != true) return false
         if (categoryList.childCount == 0) {
             focusCategoryWhenReady = true
             return true
         }
         return focusCategoryAt(0)
+    }
+
+    private fun focusFirstSortButton(): Boolean {
+        if (!sortRow.isShown) return false
+        sortRecentButton.isFocusable = true
+        val focused = sortRecentButton.requestFocus()
+        if (!focused) sortRecentButton.post { sortRecentButton.requestFocus() }
+        return focused
     }
 
     private fun focusCategoryAt(index: Int): Boolean {
@@ -671,7 +917,10 @@ class MainActivity : Activity() {
         if (item == null) {
             focusCatalogWhenReady = true
             channelList.postDelayed({
-                if (channelList.childCount > 0) focusFirstCatalogItem()
+                if (focusCatalogWhenReady && channelList.childCount > 0) {
+                    focusCatalogWhenReady = false
+                    focusFirstCatalogItem()
+                }
             }, 120L)
             return true
         }
@@ -765,6 +1014,8 @@ class MainActivity : Activity() {
             ?: navItems.getChildAt(0)
         val firstCategory = categoryList.getChildAt(0)
         val lastCategory = categoryList.getChildAt(categoryList.childCount - 1)
+        val firstSort = sortRecentButton
+        val lastSort = sortRatingButton
         val firstCatalog = channelList.getChildAt(0)
         val firstAction = actionRow.getChildAt(0)
         val lastAction = actionRow.getChildAt(actionRow.childCount - 1)
@@ -790,19 +1041,32 @@ class MainActivity : Activity() {
             link(
                 category,
                 left = if (index > 0) categoryList.getChildAt(index - 1) else selectedNav,
-                right = if (index < categoryList.childCount - 1) categoryList.getChildAt(index + 1) else firstCatalog,
+                right = if (index < categoryList.childCount - 1) categoryList.getChildAt(index + 1) else firstSort,
                 up = searchHint,
+                down = firstSort,
+            )
+        }
+        for (index in 1 until sortRow.childCount) {
+            val sortButton = sortRow.getChildAt(index)
+            link(
+                sortButton,
+                left = if (index > 1) sortRow.getChildAt(index - 1) else firstCategory,
+                right = if (index < sortRow.childCount - 1) sortRow.getChildAt(index + 1) else firstCatalog,
+                up = firstCategory,
                 down = firstCatalog,
             )
         }
+        val catalogColumns = (channelList.layoutManager as? androidx.recyclerview.widget.GridLayoutManager)?.spanCount ?: 1
         for (index in 0 until channelList.childCount) {
             val row = channelList.getChildAt(index)
+            val hasLeftCard = catalogColumns > 1 && index % catalogColumns > 0
+            val hasRightCard = catalogColumns > 1 && index % catalogColumns < catalogColumns - 1 && index + 1 < channelList.childCount
             link(
                 row,
-                left = firstCategory,
-                right = videoPreview,
-                up = if (index > 0) channelList.getChildAt(index - 1) else firstCategory,
-                down = if (index < channelList.childCount - 1) channelList.getChildAt(index + 1) else firstAction,
+                left = if (hasLeftCard) channelList.getChildAt(index - 1) else firstCategory,
+                right = if (hasRightCard) channelList.getChildAt(index + 1) else videoPreview,
+                up = if (index >= catalogColumns) channelList.getChildAt(index - catalogColumns) else firstSort,
+                down = if (index + catalogColumns < channelList.childCount) channelList.getChildAt(index + catalogColumns) else firstAction,
             )
         }
         link(videoPreview, left = firstCatalog ?: firstCategory, right = firstAction, up = searchHint, down = firstAction)
@@ -928,15 +1192,276 @@ class MainActivity : Activity() {
         applyPreviewScale()
     }
 
+    /**
+     * A versão anterior mantinha um LinearLayout legado no XML e apenas
+     * redesenhava partes dele. Isso deixava a tela de Séries exatamente como
+     * a captura enviada: a coluna velha e o preview velho continuavam sendo
+     * a hierarquia efetivamente exibida.
+     *
+     * Aqui os três componentes de dados existentes são retirados da árvore
+     * antiga e reparentados uma única vez dentro do shell FUTURE. Os
+     * repositórios, adapter, EPG e PlayerActivity continuam sendo reutilizados;
+     * somente a estrutura visual passa a ser outra.
+     */
+    private fun installInternalShell() {
+        if (internalShellInstalled) return
+        val root = findViewById<FrameLayout>(R.id.rootShell)
+        // Capturar as views enquanto ainda estão na árvore XML. Depois do
+        // removeView(), Activity.findViewById() não consegue mais encontrá-las.
+        val sidebar = findViewById<LinearLayout>(R.id.sideNavigation)
+        val catalogColumn = findViewById<LinearLayout>(R.id.channelColumn)
+        val detailsScroll = findViewById<ScrollView>(R.id.previewScroll)
+        val legacyHeader = findViewById<View>(R.id.liveHeaderRow)
+        val legacyHeading = findViewById<View>(R.id.channelHeadingRow)
+        val legacyImport = findViewById<View>(R.id.importProgressBanner)
+        val sortRowView = findViewById<LinearLayout>(R.id.sortRow)
+        val detailsContent = findViewById<LinearLayout>(R.id.previewContent)
+        val detailsContainer = findViewById<LinearLayout>(R.id.channelDetails)
+        val panel = videoPreview
+        val legacyOverlay = tvFrameOverlay
+        val homeIndex = root.indexOfChild(homePanel).coerceAtLeast(0)
+        val legacyRow = sidebar.parent as? ViewGroup ?: return
+
+        legacyRow.removeView(sidebar)
+        legacyRow.removeView(catalogColumn)
+        legacyRow.removeView(detailsScroll)
+        root.removeView(legacyRow)
+
+        internalShell = FrameLayout(this).apply {
+            id = View.generateViewId()
+            setBackgroundColor(Color.TRANSPARENT)
+            clipChildren = false
+            clipToPadding = false
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+        }
+        root.addView(internalShell, homeIndex.coerceAtMost(root.childCount))
+
+        sidebar.apply {
+            layoutParams = FrameLayout.LayoutParams(dp(92), -1).apply { gravity = Gravity.START }
+            // A curva é desenhada por SidebarGlassDrawable; os ícones e
+            // textos abaixo permanecem views reais para o destaque acompanhar
+            // a aba clicada, sem usar um print como navegação.
+            background = SidebarGlassDrawable()
+            elevation = dp(12).toFloat()
+            setPadding(dp(2), dp(8), dp(2), dp(8))
+        }
+        internalShell.addView(sidebar)
+
+        internalContent = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setBackgroundColor(0xA6050B19.toInt())
+            layoutParams = FrameLayout.LayoutParams(-1, -1).apply { leftMargin = dp(92) }
+            clipChildren = false
+            clipToPadding = false
+        }
+        internalShell.addView(internalContent)
+
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(24), dp(16), dp(28), dp(12))
+            layoutParams = LinearLayout.LayoutParams(-1, dp(108))
+        }
+        val profile = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, -1, 1f)
+        }
+        val avatar = ImageView(this).apply {
+            setImageResource(R.drawable.future_logo_safe)
+            scaleType = ImageView.ScaleType.CENTER_INSIDE
+            background = ovalBackground(0x443B6A9C)
+            layoutParams = LinearLayout.LayoutParams(dp(66), dp(66)).apply { marginEnd = dp(12) }
+            contentDescription = "Perfil FUTURE"
+        }
+        val profileText = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        profileText.addView(TextView(this).apply {
+            text = "FUTURE USER"
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.rgb(223, 237, 255))
+        })
+        internalClockText = TextView(this).apply {
+            textSize = 24f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) }
+        }
+        internalDateText = TextView(this).apply {
+            textSize = 11f
+            setTextColor(Color.rgb(166, 187, 220))
+            layoutParams = LinearLayout.LayoutParams(-1, -2)
+        }
+        profileText.addView(internalClockText)
+        profileText.addView(internalDateText)
+        profile.addView(avatar)
+        profile.addView(profileText)
+        header.addView(profile)
+        header.addView(TextView(this).apply {
+            text = "●  CONECTADO"
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.rgb(112, 255, 214))
+            gravity = Gravity.CENTER
+            layoutParams = LinearLayout.LayoutParams(-2, dp(46)).apply { marginEnd = dp(16) }
+        })
+        searchHint.apply {
+            val oldParent = parent as? ViewGroup
+            oldParent?.removeView(this)
+            text = "⌕"
+            textSize = 28f
+            gravity = Gravity.CENTER
+            setTextColor(Color.WHITE)
+            setCompoundDrawablesWithIntrinsicBounds(0, 0, 0, 0)
+            contentDescription = "Buscar no catálogo"
+            setPadding(0, 0, 0, 0)
+            background = rounded(0xB31A2B3B, 14f)
+            layoutParams = LinearLayout.LayoutParams(dp(62), dp(54))
+        }
+        header.addView(searchHint)
+        internalContent.addView(header)
+
+        catalogColumn.apply {
+            layoutParams = LinearLayout.LayoutParams(0, -1, 0.54f)
+            setBackgroundColor(Color.TRANSPARENT)
+            setPadding(dp(24), dp(8), dp(10), dp(16))
+            clipChildren = false
+        }
+        legacyHeader.visibility = View.GONE
+        legacyHeading.visibility = View.GONE
+        legacyImport.visibility = View.GONE
+        sortRowView.visibility = View.VISIBLE
+        sortRowView.clipChildren = false
+        sortRowView.clipToPadding = false
+        sortRowView.setPadding(0, dp(2), 0, dp(2))
+        // O shell deixa a faixa pronta, mas cada seção decide quando exibi-la.
+        setInternalCategoryVisibility(false)
+        detailsScroll.apply {
+            layoutParams = LinearLayout.LayoutParams(0, -1, 0.46f).apply {
+                setMargins(dp(8), dp(2), dp(24), dp(14))
+            }
+            setPadding(0, 0, 0, 0)
+            setBackgroundColor(Color.TRANSPARENT)
+            clipToPadding = false
+            isFillViewport = true
+        }
+        detailsContent.apply {
+            setBackgroundColor(Color.TRANSPARENT)
+            setPadding(dp(8), dp(2), dp(8), dp(10))
+        }
+        panel.apply {
+            layoutParams = LinearLayout.LayoutParams(-1, dp(176))
+            background = rounded(0xD9162A4B, 12f)
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setRoundRect(0, 0, view.width, view.height, dp(12).toFloat())
+                }
+            }
+        }
+        heroImage.apply {
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            alpha = 0.96f
+        }
+        legacyOverlay.visibility = View.GONE
+        actionRow.orientation = LinearLayout.HORIZONTAL
+        actionRow.setPadding(0, dp(2), 0, dp(6))
+        detailsContainer.removeView(detailDescription)
+        detailsContainer.removeView(nowCard)
+        detailsContainer.removeView(nextProgram)
+        detailsContainer.removeView(actionRow)
+        detailsContainer.addView(nowCard)
+        detailsContainer.addView(nextProgram)
+        detailsContainer.addView(detailDescription)
+        detailsContainer.addView(actionRow)
+        detailDescription.textSize = 13f
+        detailDescription.setLineSpacing(dp(2).toFloat(), 1f)
+        detailChannelName.textSize = 26f
+        detailTags.textSize = 12f
+        nowCard.setPadding(dp(14), dp(12), dp(14), dp(12))
+        currentProgram.textSize = 18f
+        currentProgramDescription.textSize = 12f
+        programTime.textSize = 11f
+        nextProgram.textSize = 12f
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(-1, 0, 1f)
+            clipChildren = false
+            clipToPadding = false
+        }
+        body.addView(catalogColumn)
+        body.addView(detailsScroll)
+        internalContent.addView(body)
+        internalShellInstalled = true
+        internalShell.visibility = View.GONE
+    }
+
+    private fun showInternalShell() {
+        if (!internalShellInstalled) return
+        internalShell.visibility = View.VISIBLE
+        if (::homeSidebarTabs.isInitialized) homeSidebarTabs.visibility = View.GONE
+        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
+        // Configurações esconde os dois painéis do catálogo. Toda entrada
+        // posterior em uma seção precisa reexibi-los explicitamente.
+        findViewById<View>(R.id.channelColumn).visibility = View.VISIBLE
+        findViewById<View>(R.id.previewScroll).visibility = View.VISIBLE
+    }
+
+    private fun hideInternalShell() {
+        if (internalShellInstalled) internalShell.visibility = View.GONE
+    }
+
+    private fun setInternalCategoryVisibility(visible: Boolean) {
+        val parent = categoryList.parent as? View ?: return
+        parent.visibility = if (visible) View.VISIBLE else View.GONE
+        parent.layoutParams = parent.layoutParams.apply {
+            height = if (visible) dp(64) else 0
+        }
+        if (::sortRow.isInitialized) {
+            sortRow.visibility = if (visible) View.VISIBLE else View.GONE
+        }
+    }
+
+    /**
+     * O snapshot usado pelo cache SQLite pode vir sem entries em memória. Se
+     * o usuário troca de aba durante a janela de carregamento, a tela não pode
+     * cair no caminho visibleItems() vazio: reidrata o estado paginado a partir
+     * dos stats locais e deixa renderCatalog() consultar o banco.
+     */
+    private fun restoreCachedCatalogIfNeeded() {
+        if (databaseBackedCatalog || cacheRestoreInFlight) return
+        cacheRestoreInFlight = true
+        repository.loadCached { cached ->
+            runOnUiThread {
+                cacheRestoreInFlight = false
+                if (cached == null || cached.totalCount <= 0 || !cached.databaseBacked) return@runOnUiThread
+                catalog = cached
+                databaseBackedCatalog = true
+                categoryCache.clear()
+                if (!homeMode && !settingsMode && !radioMode) {
+                    renderCategories()
+                    renderCatalog()
+                    if (selectedEntry == null && !isWithin(currentFocus, channelList)) selectFirstVisible()
+                }
+            }
+        }
+    }
+
     private fun setupCatalogList() {
         catalogAdapter = CatalogAdapter(
             imageLoader = imageLoader,
             fallbackLogo = ::fallbackLogo,
-            onSelected = { selectEntry(it, false) },
+            onSelected = {
+                selectEntry(it, false)
+                scheduleTrailerPreview(it)
+            },
             onClicked = { handleEntryClick(it) },
             onLongClicked = { quickToggleFavorite(it) },
         )
-        channelList.layoutManager = LinearLayoutManager(this)
+        channelList.layoutManager = androidx.recyclerview.widget.GridLayoutManager(this, 2)
         channelList.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         channelList.adapter = catalogAdapter
         channelList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
@@ -949,16 +1474,27 @@ class MainActivity : Activity() {
     }
 
     private fun renderNavigation() {
+        // A mesma sidebar curva da Home é usada em todas as páginas internas.
+        // O logo embutido da navegação antiga fica sempre oculto aqui para não
+        // duplicar a marca nem alterar a altura dos itens.
+        setSidebarBrandVisible(false)
+        findViewById<View>(R.id.sideNavigation).background = SidebarGlassDrawable()
         navItems.removeAllViews()
+        findViewById<ScrollView>(R.id.navScroll).apply {
+            isFillViewport = true
+            scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
+        }
+        navItems.layoutParams = FrameLayout.LayoutParams(-1, -1)
+        // Ordem e conjunto visíveis seguem a referência aprovada: sem a
+        // navegação antiga duplicada de Início/Voz no shell interno.
         val items = listOf(
-            Triple("INÍCIO", R.drawable.nav_home_3d, "Início"),
-            Triple("CANAIS", R.drawable.nav_live_3d, "Canais"),
-            Triple("FILMES", R.drawable.nav_movies_3d, "Filmes"),
-            Triple("SÉRIES", R.drawable.nav_series_3d, "Séries"),
-            Triple("FAVORITOS", R.drawable.nav_favorites_3d, "Favoritos"),
-            Triple("RÁDIOS", R.drawable.nav_radio_3d, "Rádios"),
-            Triple("VOZ", R.drawable.nav_voice_3d, "Voz"),
-            Triple("AJUSTES", R.drawable.nav_settings_3d, "Ajustes"),
+            Triple("CANAIS", R.drawable.home_nav_live, "Canais"),
+            Triple("FILMES", R.drawable.home_nav_movies, "Filmes"),
+            Triple("SÉRIES", R.drawable.home_nav_series, "Séries"),
+            Triple("FAVORITOS", R.drawable.home_nav_favorites, "Favoritos"),
+            Triple("RÁDIOS", R.drawable.home_nav_radio, "Rádios"),
+            Triple("VOZ", R.drawable.home_nav_microphone, "Microfone"),
+            Triple("AJUSTES", R.drawable.home_nav_settings, "Configurações"),
         )
         items.forEachIndexed { index, (label, iconRes, captionText) ->
             lateinit var icon: ImageView
@@ -972,8 +1508,8 @@ class MainActivity : Activity() {
                 tag = label
                 clipChildren = false
                 clipToPadding = false
-                setPadding(0, 6, 0, 6)
-                layoutParams = LinearLayout.LayoutParams(-1, 120).apply { setMargins(4, 6, 4, 6) }
+                setPadding(0, dp(2), 0, dp(2))
+                layoutParams = LinearLayout.LayoutParams(-1, 0, 1f).apply { setMargins(0, 0, 0, 0) }
                 setOnClickListener {
                     when (label) {
                         "INÍCIO" -> showHome()
@@ -981,9 +1517,9 @@ class MainActivity : Activity() {
                         "FILMES" -> switchSection(MediaKind.MOVIE)
                         "SÉRIES" -> switchSection(MediaKind.SERIES)
                         "FAVORITOS" -> switchFavorites()
-                        "RÁDIOS" -> showRadioDialog()
+                        "RÁDIOS" -> switchRadio()
                         "VOZ" -> startVoiceCommand()
-                        "AJUSTES" -> showSettingsDialog()
+                        "AJUSTES" -> showSettingsScreen()
                     }
                 }
                 setOnFocusChangeListener { view, hasFocus ->
@@ -992,23 +1528,29 @@ class MainActivity : Activity() {
             }
             icon = ImageView(this).apply {
                 setImageResource(iconRes)
+                imageTintList = null
                 scaleType = ImageView.ScaleType.FIT_CENTER
+                scaleX = 1f
+                scaleY = 1f
                 alpha = if (isNavigationSelected(label)) 1f else 0.72f
                 background = null
-                layoutParams = LinearLayout.LayoutParams(60, 60).apply { setMargins(0, 0, 0, 5) }
+                    layoutParams = LinearLayout.LayoutParams(dp(40), dp(40)).apply { setMargins(0, 0, 0, dp(1)) }
                 setPadding(0, 0, 0, 0)
             }
             caption = TextView(this).apply {
                 text = captionText
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                textSize = 9f
-                setTextColor(if (isNavigationSelected(label)) Color.rgb(43, 255, 176) else Color.rgb(170, 177, 199))
-                layoutParams = LinearLayout.LayoutParams(-1, 26)
+                textSize = 10f
+                setTextColor(if (isNavigationSelected(label)) Color.rgb(232, 242, 255) else Color.rgb(170, 186, 220))
+                setShadowLayer(4f, 0f, 1f, 0xCC000000.toInt())
+                layoutParams = LinearLayout.LayoutParams(-1, dp(22))
             }
+            icon.visibility = View.VISIBLE
+            caption.visibility = View.VISIBLE
             row.addView(icon)
             row.addView(caption)
-            row.background = rounded(if (isNavigationSelected(label)) 0x223FE7EF else 0x00111629, 12f)
+            row.background = sidebarRowDrawable(isNavigationSelected(label))
             navItems.addView(row)
         }
     }
@@ -1019,15 +1561,36 @@ class MainActivity : Activity() {
             val row = child as? LinearLayout ?: continue
             val label = row.tag as? String ?: continue
             val active = if (focusedView != null) child === focusedView else isNavigationSelected(label)
-            row.background = rounded(if (active) 0x333FE7EF else 0x00111629, 12f)
-            (row.getChildAt(0) as? ImageView)?.alpha = if (active) 1f else 0.72f
+            row.background = sidebarRowDrawable(active)
+            (row.getChildAt(0) as? ImageView)?.alpha = if (active) 1f else 0.62f
+            (row.getChildAt(0) as? ImageView)?.imageTintList = null
             (row.getChildAt(1) as? TextView)?.setTextColor(
-                if (active) Color.rgb(43, 255, 176) else Color.rgb(170, 177, 199)
+                if (active) Color.rgb(232, 242, 255) else Color.rgb(170, 186, 220)
             )
         }
     }
 
+    private fun sidebarRowDrawable(active: Boolean): GradientDrawable {
+        return if (active) {
+            GradientDrawable(
+                GradientDrawable.Orientation.LEFT_RIGHT,
+                intArrayOf(0x7A6E8FC9, 0x4A5E79B8, 0x207A9CDB),
+            ).apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(18).toFloat()
+                setStroke(dp(1), 0x8BC7E8FF.toInt())
+            }
+        } else {
+            GradientDrawable().apply {
+                shape = GradientDrawable.RECTANGLE
+                cornerRadius = dp(18).toFloat()
+                setColor(0x00000000)
+            }
+        }
+    }
+
     private fun isNavigationSelected(label: String): Boolean = when {
+        settingsMode -> label == "AJUSTES"
         homeMode -> label == "INÍCIO"
         favoritesOnly -> label == "FAVORITOS"
         radioMode -> label == "RÁDIOS"
@@ -1037,29 +1600,702 @@ class MainActivity : Activity() {
         else -> label == "SÉRIES"
     }
 
+    private fun profilePreferences() = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE)
+
+    private fun loadProfiles(): MutableList<UserProfile> {
+        val raw = profilePreferences().getString(PREF_PROFILES, null).orEmpty()
+        val profiles = mutableListOf<UserProfile>()
+        if (raw.isNotBlank()) {
+            runCatching {
+                val array = JSONArray(raw)
+                for (index in 0 until array.length()) {
+                    val item = array.optJSONObject(index) ?: continue
+                    val id = item.optString("id").trim()
+                    val name = item.optString("name").trim()
+                    if (id.isNotBlank() && name.isNotBlank()) profiles += UserProfile(id, name, item.optInt("avatar", 0).coerceIn(0, profileAvatarAssets.lastIndex.coerceAtLeast(0)))
+                }
+            }
+        }
+        return profiles
+            .filter { it.id != "default" }
+            .distinctBy { it.id }
+            .toMutableList()
+    }
+
+    private fun saveProfiles(profiles: List<UserProfile>) {
+        val array = JSONArray()
+        profiles.forEach { profile ->
+            array.put(JSONObject().apply {
+                put("id", profile.id)
+                put("name", profile.name)
+                put("avatar", profile.avatar)
+            })
+        }
+        profilePreferences().edit().putString(PREF_PROFILES, array.toString()).apply()
+    }
+
+    private fun loadActiveProfile() {
+        val profiles = loadProfiles()
+        val requestedId = profilePreferences().getString(PREF_ACTIVE_PROFILE_ID, "").orEmpty()
+        val active = profiles.firstOrNull { it.id == requestedId } ?: profiles.firstOrNull()
+        if (active == null) {
+            activeProfileId = ""
+            activeProfileName = "SELECIONE UM PERFIL"
+            activeProfileAvatar = 0
+            profilePreferences().edit().remove(PREF_ACTIVE_PROFILE_ID).apply()
+        } else {
+            activeProfileId = active.id
+            activeProfileName = active.name
+            activeProfileAvatar = active.avatar
+            if (requestedId != active.id) profilePreferences().edit().putString(PREF_ACTIVE_PROFILE_ID, active.id).apply()
+        }
+        saveProfiles(profiles)
+    }
+
+    private fun updateProfileHeader() {
+        if (!::homeUserName.isInitialized) return
+        homeUserName.text = activeProfileName
+        if (activeProfileId.isBlank()) {
+            homeProfileImage.setImageResource(R.drawable.future_logo_safe)
+        } else {
+            homeProfileImage.setImageResource(profileAvatarAssets.getOrElse(activeProfileAvatar) { profileAvatarAssets.first() })
+        }
+        homeProfileImage.contentDescription = if (activeProfileId.isBlank()) "Selecionar perfil" else "Perfil $activeProfileName. Clique para trocar"
+    }
+
+    private fun positionHomeSidebarTabs() {
+        if (!::homePanel.isInitialized || !::homeSidebarTabs.isInitialized) return
+        val width = homePanel.width
+        val height = homePanel.height
+        if (width <= 0 || height <= 0) return
+        val params = homeSidebarTabs.layoutParams as? FrameLayout.LayoutParams ?: return
+        // Proporção da imagem aprovada: painel branco largo na lateral,
+        // cápsulas menores dentro dele e espaço de cabeçalho no topo.
+        params.width = (width * 0.19f).toInt().coerceAtLeast(dp(240))
+        params.height = height
+        params.leftMargin = 0
+        params.topMargin = 0
+        homeSidebarTabs.layoutParams = params
+    }
+
+    private fun positionHomeProfileHeader() {
+        if (!::homePanel.isInitialized || !::homeUserHeader.isInitialized) return
+        val width = homePanel.width
+        val height = homePanel.height
+        if (width <= 0 || height <= 0) return
+        val params = homeUserHeader.layoutParams as? FrameLayout.LayoutParams ?: return
+        // Cabeçalho compacto no canto superior esquerdo. A largura agora cobre
+        // avatar, nome, relógio e data sem cortar os últimos dígitos.
+        params.width = (width * 0.22f).toInt().coerceAtLeast(dp(250))
+        // A área clicável termina antes da primeira aba; assim clicar em
+        // NOVELAS nunca pode acionar o perfil por sobreposição.
+        params.height = (height * 0.09f).toInt()
+        params.leftMargin = (width * 0.008f).toInt().coerceAtLeast(dp(6))
+        params.topMargin = (height * 0.015f).toInt()
+        homeUserHeader.layoutParams = params
+    }
+
+    private fun showProfileDialog() {
+        profileDialog?.dismiss()
+        val profiles = loadProfiles()
+        var selectedProfileId: String? = profiles.firstOrNull { it.id == activeProfileId }?.id
+        var selectedAvatar = profiles.firstOrNull { it.id == activeProfileId }?.avatar ?: 0
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(28), dp(24), dp(28), dp(22))
+            background = rounded(0xF20A1730, 24f)
+        }
+        val title = TextView(this).apply {
+            text = "ESCOLHER PERFIL"
+            setTextColor(Color.WHITE)
+            textSize = 20f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+        }
+        val subtitle = TextView(this).apply {
+            text = "Cada perfil mantém seus favoritos e seu histórico separados."
+            setTextColor(Color.rgb(174, 205, 235))
+            textSize = 12f
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5); bottomMargin = dp(16) }
+        }
+        root.addView(title)
+        root.addView(subtitle)
+        val newProfileButton = TextView(this).apply {
+            text = "CRIAR NOVO PERFIL"
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(125, 246, 224))
+            textSize = 11f
+            isFocusable = true
+            isClickable = true
+            background = rounded(0x332A6B72, 10f)
+            layoutParams = LinearLayout.LayoutParams(dp(190), dp(34)).apply { bottomMargin = dp(8) }
+        }
+        root.addView(newProfileButton)
+        val cardsScroll = HorizontalScrollView(this).apply {
+            isHorizontalScrollBarEnabled = false
+            layoutParams = LinearLayout.LayoutParams(-1, dp(150))
+        }
+        val cardsRow = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+        }
+        cardsScroll.addView(cardsRow)
+        root.addView(cardsScroll)
+        val nameInput = EditText(this).apply {
+            hint = "Nome do perfil"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_FLAG_CAP_SENTENCES
+            setText(profiles.firstOrNull { it.id == activeProfileId }?.name.orEmpty())
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(145, 174, 205))
+            textSize = 15f
+            setPadding(dp(14), 0, dp(14), 0)
+            background = rounded(0x663C5E82, 12f)
+            layoutParams = LinearLayout.LayoutParams(-1, dp(48)).apply { topMargin = dp(12) }
+        }
+        root.addView(nameInput)
+        val actions = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.END or Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(-1, dp(54)).apply { topMargin = dp(14) }
+        }
+        val cancel = TextView(this).apply {
+            text = "CANCELAR"
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(187, 211, 238))
+            textSize = 12f
+            isFocusable = true
+            isClickable = true
+            background = rounded(0x332A4265, 12f)
+            layoutParams = LinearLayout.LayoutParams(dp(130), dp(46)).apply { marginEnd = dp(10) }
+        }
+        val save = TextView(this).apply {
+            text = "OK"
+            gravity = Gravity.CENTER
+            setTextColor(Color.rgb(4, 16, 28))
+            textSize = 13f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            isFocusable = true
+            isClickable = true
+            background = rounded(0xFF55E6D0, 12f)
+            layoutParams = LinearLayout.LayoutParams(dp(130), dp(46))
+        }
+        actions.addView(cancel)
+        actions.addView(save)
+        root.addView(actions)
+
+        val cardViews = mutableListOf<Pair<String?, View>>()
+        fun repaintCards() {
+            cardViews.forEach { (id, view) ->
+                val avatar = (view.tag as? Int) ?: 0
+                val active = if (id != null) id == selectedProfileId else avatar == selectedAvatar
+                view.background = rounded(if (active) 0x663FE7EF else 0x261C3150, 16f).apply {
+                    if (active) setStroke(dp(2), Color.rgb(86, 239, 226))
+                }
+            }
+        }
+        fun addProfileCard(profile: UserProfile?, avatar: Int, label: String, preserveSelectedProfile: Boolean = false) {
+            val card = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                gravity = Gravity.CENTER
+                isFocusable = true
+                isClickable = true
+                setPadding(dp(7), dp(7), dp(7), dp(7))
+                layoutParams = LinearLayout.LayoutParams(dp(116), dp(132)).apply { setMargins(0, 0, dp(10), 0) }
+                tag = avatar
+            }
+            val image = ImageView(this).apply {
+                setImageResource(profileAvatarAssets.getOrElse(avatar) { profileAvatarAssets.first() })
+                scaleType = ImageView.ScaleType.CENTER_CROP
+                background = ovalBackground(0x553B6A9C)
+                outlineProvider = ViewOutlineProvider.BACKGROUND
+                clipToOutline = true
+                contentDescription = label
+                layoutParams = LinearLayout.LayoutParams(dp(72), dp(72))
+            }
+            val labelView = TextView(this).apply {
+                text = label
+                gravity = Gravity.CENTER
+                maxLines = 1
+                ellipsize = android.text.TextUtils.TruncateAt.END
+                setTextColor(Color.WHITE)
+                textSize = 10f
+                layoutParams = LinearLayout.LayoutParams(-1, dp(28)).apply { topMargin = dp(4) }
+            }
+            card.addView(image)
+            card.addView(labelView)
+            card.setOnFocusChangeListener { view, hasFocus ->
+                if (hasFocus) view.alpha = 1f else view.alpha = 0.86f
+            }
+            card.setOnClickListener {
+                if (profile != null) {
+                    selectedProfileId = profile.id
+                    selectedAvatar = profile.avatar
+                    nameInput.setText(profile.name)
+                    nameInput.setSelection(nameInput.text.length)
+                } else if (!preserveSelectedProfile) {
+                    selectedProfileId = null
+                    nameInput.setText("")
+                }
+                selectedAvatar = avatar
+                repaintCards()
+            }
+            cardsRow.addView(card)
+            cardViews += (profile?.id to card)
+        }
+        newProfileButton.setOnClickListener {
+            selectedProfileId = null
+            selectedAvatar = 0
+            nameInput.setText("")
+            repaintCards()
+            nameInput.requestFocus()
+        }
+        profiles.forEach { addProfileCard(it, it.avatar, it.name) }
+        // A galeria contém somente os avatares fornecidos. Para criar um perfil,
+        // basta escolher qualquer avatar, informar o nome e confirmar em OK.
+        profileAvatarAssets.indices.forEach { avatar -> addProfileCard(null, avatar, "Avatar ${avatar + 1}", preserveSelectedProfile = true) }
+        repaintCards()
+
+        val dialog = Dialog(this)
+        profileDialog = dialog
+        dialog.setContentView(root)
+        dialog.setCanceledOnTouchOutside(true)
+        dialog.setOnDismissListener { if (profileDialog === dialog) profileDialog = null }
+        cancel.setOnClickListener { dialog.dismiss() }
+        save.setOnClickListener {
+            val name = nameInput.text.toString().trim().ifBlank { "Perfil ${profiles.size + 1}" }.take(28)
+            val updated = profiles.toMutableList()
+            val existingIndex = selectedProfileId?.let { id -> updated.indexOfFirst { it.id == id } } ?: -1
+            val profile = if (existingIndex >= 0) {
+                UserProfile(updated[existingIndex].id, name, selectedAvatar)
+            } else {
+                UserProfile("profile_${System.currentTimeMillis()}", name, selectedAvatar)
+            }
+            if (existingIndex >= 0) updated[existingIndex] = profile else updated += profile
+            saveProfiles(updated)
+            activeProfileId = profile.id
+            activeProfileName = profile.name
+            activeProfileAvatar = profile.avatar
+            profilePreferences().edit().putString(PREF_ACTIVE_PROFILE_ID, activeProfileId).apply()
+            updateProfileHeader()
+            refreshForProfileChange()
+            dialog.dismiss()
+        }
+        dialog.window?.let { window ->
+            window.setBackgroundDrawable(ColorDrawable(Color.TRANSPARENT))
+            window.addFlags(WindowManager.LayoutParams.FLAG_DIM_BEHIND)
+            window.attributes = window.attributes.apply { dimAmount = 0.72f }
+            window.setLayout((resources.displayMetrics.widthPixels * 0.70f).toInt().coerceAtLeast(dp(700)), dp(430))
+        }
+        dialog.setOnShowListener {
+            dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.70f).toInt().coerceAtLeast(dp(700)), dp(430))
+            cardViews.firstOrNull { it.first == activeProfileId }?.second?.requestFocus()
+        }
+        dialog.show()
+        dialog.window?.setLayout((resources.displayMetrics.widthPixels * 0.70f).toInt().coerceAtLeast(dp(700)), dp(430))
+    }
+
+    private fun refreshForProfileChange() {
+        if (!homeMode && !settingsMode && !radioMode) {
+            selectedEntry = null
+            renderCategories()
+            renderCatalog()
+            selectFirstVisible()
+        }
+    }
+
     private fun showHome() {
         parentalUnlocked = false
         homeMode = true
+        settingsMode = false
+        settingsPanel?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        settingsPanel = null
+        homeFeaturedKey = null
+        homeRotationRequestId++
+        homeRotationEntries = emptyList()
+        homeRotationIndex = 0
         favoritesOnly = false
         radioMode = false
         voiceMode = false
         radioDialog?.dismiss()
+        renderNavigation()
+        setSidebarBrandVisible(false)
+        homeUserHeader.visibility = View.VISIBLE
+        positionHomeProfileHeader()
+        updateProfileHeader()
         homePanel.visibility = View.VISIBLE
-        homePanel.post { orbitCenterCard?.requestFocus() }
-        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
+        homeSidebarTabs.visibility = View.VISIBLE
+        (homePanel.layoutParams as? FrameLayout.LayoutParams)?.let { params ->
+            params.leftMargin = 0
+            homePanel.layoutParams = params
+        }
+        homePanel.post {
+            positionHomeSidebarTabs()
+            positionHomeProfileHeader()
+            renderExactHomeHotspots()
+            homeSidebarTabs.bringToFront()
+            homeUserHeader.bringToFront()
+        }
+        hideInternalShell()
+        findViewById<View>(R.id.sideNavigation).visibility = View.GONE
         findViewById<View>(R.id.channelColumn).visibility = View.GONE
         findViewById<View>(R.id.previewScroll).visibility = View.GONE
-        renderHomeHero()
+    }
+
+    private fun renderExactHomeHotspots() {
+        homeOrbitRoot.removeAllViews()
+        val width = homeOrbitRoot.width
+        val height = homeOrbitRoot.height
+        if (width <= 0 || height <= 0) {
+            homeOrbitRoot.post { renderExactHomeHotspots() }
+            return
+        }
+
+        updateHomeClock()
+        mainHandler.removeCallbacks(homeClockTicker)
+        mainHandler.post(homeClockTicker)
+        val heroSize = (minOf(width, height) * 0.45f).toInt()
+        val heroLeft = (width * 0.535f - heroSize / 2f).toInt()
+        val heroTop = (height * 0.505f - heroSize / 2f).toInt()
+        val heroOverlay = FrameLayout(this).apply {
+            layoutParams = FrameLayout.LayoutParams(heroSize, heroSize).apply {
+                leftMargin = heroLeft
+                topMargin = heroTop
+            }
+            clipToOutline = true
+            outlineProvider = object : android.view.ViewOutlineProvider() {
+                override fun getOutline(view: View, outline: android.graphics.Outline) {
+                    outline.setOval(0, 0, view.width, view.height)
+                }
+            }
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
+        }
+        heroOverlay.addView(View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0x00000000, 0xEA020817.toInt()),
+            )
+        })
+        val dynamicBadge = TextView(this).apply {
+            text = "AO VIVO"
+            setTextColor(Color.WHITE)
+            textSize = 11f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            gravity = Gravity.CENTER
+            background = rounded(0xFFE03D48, 12f)
+            setPadding(dp(10), dp(4), dp(10), dp(4))
+            layoutParams = FrameLayout.LayoutParams(-2, -2, Gravity.TOP or Gravity.CENTER_HORIZONTAL).apply {
+                topMargin = dp(22)
+            }
+        }
+        val dynamicLogo = ImageView(this).apply {
+            // A arte ocupa todo o círculo e continua inteira dentro da máscara.
+            // O degradê inferior é um irmão separado e protege o texto.
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            alpha = 0.96f
+            layoutParams = FrameLayout.LayoutParams(-1, -1, Gravity.CENTER).apply {
+                setMargins(dp(5), dp(5), dp(5), dp(5))
+            }
+            setPadding(0, 0, 0, 0)
+        }
+        val dynamicTitle = TextView(this).apply {
+            setTextColor(Color.WHITE)
+            textSize = 16f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            layoutParams = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+                leftMargin = dp(18)
+                rightMargin = dp(18)
+                bottomMargin = dp(38)
+            }
+        }
+        val dynamicMeta = TextView(this).apply {
+            setTextColor(Color.rgb(180, 221, 255))
+            textSize = 11f
+            maxLines = 2
+            ellipsize = android.text.TextUtils.TruncateAt.END
+            gravity = Gravity.CENTER
+            layoutParams = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply {
+                leftMargin = dp(12)
+                rightMargin = dp(12)
+                bottomMargin = dp(14)
+            }
+        }
+        val logoShade = View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+            background = GradientDrawable(
+                GradientDrawable.Orientation.TOP_BOTTOM,
+                intArrayOf(0x00020817, 0x00020817, 0xD9020817.toInt()),
+            )
+        }
+        heroOverlay.addView(dynamicBadge)
+        heroOverlay.addView(dynamicLogo)
+        heroOverlay.addView(logoShade)
+        heroOverlay.addView(dynamicTitle)
+        heroOverlay.addView(dynamicMeta)
+        homeOrbitRoot.addView(heroOverlay)
+        exactHomeBadge = dynamicBadge
+        exactHomeChannelLogo = dynamicLogo
+        exactHomeProgramTitle = dynamicTitle
+        exactHomeProgramMeta = dynamicMeta
+
+        data class Hotspot(
+            val left: Float,
+            val top: Float,
+            val right: Float,
+            val bottom: Float,
+            val action: () -> Unit,
+        )
+
+        val openLive = { switchSection(MediaKind.LIVE) }
+        val openChannels = { switchSection(MediaKind.LIVE) }
+        val openMovies = { switchSection(MediaKind.MOVIE) }
+        val openSeries = { switchSection(MediaKind.SERIES) }
+        val openFavorites = { switchFavorites() }
+        val openRadios = { switchRadio() }
+        val openSports = { openSportsDayCategory() }
+        val openKids = { openCategoryByKeywords(listOf("kids", "infantil", "desenho", "animação", "animacao"), "Kids") }
+        val openCenter = {
+            // O centro pode estar exibindo uma entrada diferente da seleção
+            // anterior da grade. Use sempre a entrada da rotação atual; assim,
+            // Patati Patatá/EPG abre o canal correspondente e, se a entrada for
+            // filme ou série, switchSection recebe o MediaKind correto.
+            val displayedEntry = exactHomeProgramEntry ?: selectedEntry
+            displayedEntry?.let { openFeaturedEntry(it) } ?: openLive()
+        }
+
+        val hotspots = listOf(
+            // Canal central.
+            Hotspot(0.34f, 0.24f, 0.68f, 0.76f, openCenter),
+            // Busca e hubs principais.
+            Hotspot(0.88f, 0.00f, 1.00f, 0.16f, { showSearchDialog() }),
+            Hotspot(0.47f, 0.00f, 0.61f, 0.19f, openChannels),
+            Hotspot(0.26f, 0.11f, 0.44f, 0.31f, openSports),
+            Hotspot(0.62f, 0.09f, 0.80f, 0.30f, openMovies),
+            Hotspot(0.74f, 0.30f, 0.94f, 0.57f, openSeries),
+            Hotspot(0.64f, 0.66f, 0.83f, 0.90f, openFavorites),
+            Hotspot(0.40f, 0.69f, 0.61f, 0.94f, openRadios),
+            Hotspot(0.23f, 0.66f, 0.43f, 0.90f, openKids),
+            // Satélites Esporte.
+            Hotspot(0.25f, 0.10f, 0.30f, 0.18f, openSports),
+            Hotspot(0.34f, 0.06f, 0.40f, 0.14f, openSports),
+            Hotspot(0.20f, 0.20f, 0.27f, 0.29f, openSports),
+            Hotspot(0.30f, 0.21f, 0.37f, 0.30f, openSports),
+            // Satélites Cinema.
+            Hotspot(0.70f, 0.04f, 0.77f, 0.13f, openMovies),
+            Hotspot(0.76f, 0.10f, 0.83f, 0.20f, openMovies),
+            Hotspot(0.70f, 0.18f, 0.77f, 0.28f, openMovies),
+            Hotspot(0.80f, 0.19f, 0.87f, 0.29f, openMovies),
+            // Satélites Séries.
+            Hotspot(0.80f, 0.32f, 0.87f, 0.41f, openSeries),
+            Hotspot(0.87f, 0.34f, 0.94f, 0.44f, openSeries),
+            Hotspot(0.84f, 0.46f, 0.91f, 0.56f, openSeries),
+            Hotspot(0.76f, 0.47f, 0.83f, 0.57f, openSeries),
+            // Satélites Favoritos.
+            Hotspot(0.73f, 0.64f, 0.80f, 0.73f, openFavorites),
+            Hotspot(0.80f, 0.70f, 0.87f, 0.80f, openFavorites),
+            Hotspot(0.69f, 0.78f, 0.76f, 0.88f, openFavorites),
+            Hotspot(0.78f, 0.82f, 0.85f, 0.92f, openFavorites),
+            // Satélites Rádios.
+            Hotspot(0.43f, 0.76f, 0.50f, 0.85f, openRadios),
+            Hotspot(0.51f, 0.77f, 0.58f, 0.87f, openRadios),
+            Hotspot(0.45f, 0.88f, 0.52f, 0.98f, openRadios),
+            Hotspot(0.56f, 0.86f, 0.63f, 0.95f, openRadios),
+            // Satélites Kids.
+            Hotspot(0.24f, 0.65f, 0.31f, 0.75f, openKids),
+            Hotspot(0.20f, 0.76f, 0.27f, 0.86f, openKids),
+            Hotspot(0.29f, 0.80f, 0.36f, 0.90f, openKids),
+            Hotspot(0.33f, 0.70f, 0.40f, 0.80f, openKids),
+        )
+
+        exactHomeHotspots = hotspots.map { hotspot ->
+            View(this).apply {
+                layoutParams = FrameLayout.LayoutParams(
+                    ((hotspot.right - hotspot.left) * width).toInt().coerceAtLeast(24),
+                    ((hotspot.bottom - hotspot.top) * height).toInt().coerceAtLeast(24),
+                ).apply {
+                    leftMargin = (hotspot.left * width).toInt()
+                    topMargin = (hotspot.top * height).toInt()
+                }
+                isFocusable = true
+                isClickable = true
+                setOnClickListener { hotspot.action() }
+                foreground = ovalFocusRing()
+            }
+        }
+        exactHomeHotspots.forEach(homeOrbitRoot::addView)
+        exactHomeHotspots.firstOrNull()?.let { first ->
+            first.nextFocusUpId = homeUserHeader.id
+            if (::homeSidebarTabs.isInitialized) {
+                homeSidebarTabs.setRightFocusTargetId(first.id)
+                val sidebarFirstId = homeSidebarTabs.firstTabId()
+                if (sidebarFirstId != View.NO_ID) {
+                    homeUserHeader.nextFocusDownId = sidebarFirstId
+                    homeUserHeader.nextFocusRightId = sidebarFirstId
+                }
+            } else {
+                homeUserHeader.nextFocusDownId = first.id
+                homeUserHeader.nextFocusRightId = first.id
+            }
+            first.post { if (homeMode && currentFocus == null) first.requestFocus() }
+        }
+        loadHomeRotationEntries(++homeRotationRequestId)
+    }
+
+    private fun loadHomeRotationEntries(requestId: Int) {
+        val results = mutableMapOf<MediaKind, List<CatalogEntry>>()
+        var pending = 3
+        val hidden = hiddenGroups()
+        fun finish() {
+            if (!homeMode || requestId != homeRotationRequestId) return
+            val live = results[MediaKind.LIVE].orEmpty().distinctBy { it.key }
+            val allDay = live.filter { isTwentyFourHourEntry(it) }
+            val regularLive = live.filterNot { isTwentyFourHourEntry(it) }
+            val movies = results[MediaKind.MOVIE].orEmpty().distinctBy { it.key }
+            val series = results[MediaKind.SERIES].orEmpty().distinctBy { it.key }
+            val buckets = listOf(allDay, regularLive, movies, series)
+            val mixed = buildList {
+                val maxSize = buckets.maxOfOrNull { it.size } ?: 0
+                for (index in 0 until maxSize) {
+                    buckets.forEach { bucket -> bucket.getOrNull(index)?.let(::add) }
+                }
+            }.distinctBy { it.key }
+            homeRotationEntries = mixed
+            if (mixed.isEmpty()) {
+                updateExactHomeProgram(null)
+                return
+            }
+            val currentKey = exactHomeProgramEntry?.key
+            homeRotationIndex = mixed.indexOfFirst { it.key == currentKey }.takeIf { it >= 0 } ?: 0
+            updateExactHomeProgram(mixed[homeRotationIndex])
+        }
+        listOf(MediaKind.LIVE, MediaKind.MOVIE, MediaKind.SERIES).forEach { kind ->
+            repository.queryPage(
+                kind = kind,
+                group = "Todos",
+                search = "",
+                hidden = hidden,
+                favorites = emptySet(),
+                sortMode = SortMode.RECENT,
+                limit = 18,
+                offset = 0,
+                seriesOnly = kind == MediaKind.SERIES,
+                includeAdult = false,
+            ) { entries ->
+                runOnUiThread {
+                    if (requestId != homeRotationRequestId) return@runOnUiThread
+                    results[kind] = entries
+                    pending--
+                    if (pending == 0) finish()
+                }
+            }
+        }
+    }
+
+    private fun isTwentyFourHourEntry(entry: CatalogEntry): Boolean {
+        val value = "${entry.name} ${entry.groupTitle}".lowercase(Locale.ROOT)
+        return value.contains("24 horas") || value.contains("24h") || value.contains("24/7") || value.contains("24 x 7") || value.contains("24x7")
+    }
+
+    private fun advanceHomeRotation() {
+        if (!homeMode || homeRotationEntries.isEmpty()) return
+        homeRotationIndex = (homeRotationIndex + 1) % homeRotationEntries.size
+        val entry = homeRotationEntries[homeRotationIndex]
+        homeFeaturedKey = entry.key
+        updateExactHomeProgram(entry)
+    }
+
+    private fun updateExactHomeProgram(entry: CatalogEntry?) {
+        exactHomeProgramEntry = entry
+        if (entry == null) {
+            exactHomeBadge?.text = "FUTURE"
+            exactHomeBadge?.background = rounded(0xFF2E557C, 12f)
+            exactHomeProgramTitle?.text = "Aguardando catálogo"
+            exactHomeProgramMeta?.text = "Nenhum conteúdo disponível"
+            exactHomeChannelLogo?.setImageResource(R.drawable.future_logo_safe)
+            return
+        }
+
+        val isLive = entry.kind == MediaKind.LIVE
+        val programs = if (isLive) epgProgramsFor(entry) else emptyList()
+        val current = if (isLive) currentEpgProgram(programs) else null
+        val next = current?.let { active -> programs.firstOrNull { it.start >= active.stop } }
+        val displayTitle = when {
+            current?.title?.isNotBlank() == true -> current.title
+            entry.kind == MediaKind.SERIES -> seriesTitle(entry).ifBlank { entry.name }
+            else -> entry.name
+        }
+        exactHomeBadge?.text = when (entry.kind) {
+            MediaKind.LIVE -> "AO VIVO"
+            MediaKind.MOVIE -> "FILME"
+            MediaKind.SERIES -> "SÉRIE"
+        }
+        exactHomeBadge?.background = rounded(
+            when (entry.kind) {
+                MediaKind.LIVE -> 0xFFE03D48
+                MediaKind.MOVIE -> 0xFFE29A35
+                MediaKind.SERIES -> 0xFF8B5BD6
+            },
+            12f,
+        )
+        exactHomeProgramTitle?.text = displayTitle
+        exactHomeProgramMeta?.text = when {
+            isLive && current != null && next != null -> "${entry.name}  •  ${formatTime(current.start)}–${formatTime(current.stop)}  •  AO VIVO\nA seguir: ${next.title}  •  ${formatTime(next.start)}"
+            isLive && current != null -> "${entry.name}  •  ${formatTime(current.start)}–${formatTime(current.stop)}  •  AO VIVO"
+            isLive -> "${entry.name}  •  ${entry.groupTitle.ifBlank { "CANAIS" }}  •  AO VIVO"
+            else -> "${entry.groupTitle.ifBlank { "Catálogo" }}  •  ${kindLabel(entry.kind)}"
+        }
+        val logo = entry.logoUrl.ifBlank { entry.backdropUrl }
+        if (logo.isBlank()) {
+            exactHomeChannelLogo?.setImageResource(fallbackLogo(entry))
+        } else {
+            exactHomeChannelLogo?.let { imageLoader.loadCropped(logo, it, fallbackLogo(entry)) }
+        }
+    }
+
+    private fun setSidebarBrandVisible(visible: Boolean) {
+        appLogo.visibility = if (visible) View.VISIBLE else View.GONE
+        brandMark.visibility = if (visible) View.VISIBLE else View.GONE
+        brandSubtitle.visibility = if (visible) View.VISIBLE else View.GONE
+    }
+
+    private fun alignHomePanelToNavigation() {
+        homePanel.post {
+            val navigation = findViewById<View>(R.id.sideNavigation)
+            val width = navigation.width
+            if (width <= 0) return@post
+            val params = homePanel.layoutParams as? FrameLayout.LayoutParams ?: return@post
+            if (params.leftMargin != width) {
+                params.leftMargin = width
+                homePanel.layoutParams = params
+            }
+        }
     }
 
     private fun updateHomeClock() {
         val now = java.util.Calendar.getInstance()
-        homeClockText.text = String.format("%02d:%02d", now.get(java.util.Calendar.HOUR_OF_DAY), now.get(java.util.Calendar.MINUTE))
+        val clock = String.format("%02d:%02d", now.get(java.util.Calendar.HOUR_OF_DAY), now.get(java.util.Calendar.MINUTE))
         val meses = listOf("Jan", "Fev", "Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov", "Dez")
-        homeDateText.text = "${now.get(java.util.Calendar.DAY_OF_MONTH)} ${meses[now.get(java.util.Calendar.MONTH)]}"
+        val date = "${now.get(java.util.Calendar.DAY_OF_MONTH)} ${meses[now.get(java.util.Calendar.MONTH)]}"
+        homeClockText.text = clock
+        homeDateText.text = date
+        internalClockText?.text = clock
+        internalDateText?.text = date
+        if (homeMode) exactHomeProgramEntry?.let { updateExactHomeProgram(it) }
     }
 
-    private data class OrbitCategory(val label: String, val sublabel: String, val icon: String, val color: Long, val action: () -> Unit)
+    private data class OrbitCategory(val label: String, val sublabel: String, val iconRes: Int, val color: Long, val action: () -> Unit)
+
+    private val orbitSatelliteIcons = mapOf(
+        "ESPORTE" to listOf(R.drawable.orbit_icon_sport, R.drawable.ic_nav_live, R.drawable.orbit_icon_favorites, R.drawable.ic_nav_radio),
+        "CINEMATOGRÁFICOS" to listOf(R.drawable.orbit_icon_cinema, R.drawable.orbit_icon_series, R.drawable.orbit_icon_favorites, R.drawable.ic_nav_movies),
+        "SÉRIES" to listOf(R.drawable.orbit_icon_series, R.drawable.ic_nav_live, R.drawable.orbit_icon_cinema, R.drawable.ic_nav_favorites),
+        "FAVORITOS" to listOf(R.drawable.orbit_icon_favorites, R.drawable.orbit_icon_cinema, R.drawable.ic_nav_series, R.drawable.ic_nav_radio),
+        "RÁDIOS" to listOf(R.drawable.orbit_icon_radio, R.drawable.ic_nav_voice, R.drawable.orbit_icon_radio, R.drawable.ic_nav_radio),
+        "KIDS" to listOf(R.drawable.orbit_icon_kids, R.drawable.orbit_icon_favorites, R.drawable.orbit_icon_cinema, R.drawable.ic_nav_series),
+    )
 
     // Constroi a tela inicial em formato de "orbita": um circulo central
     // (destaque ao vivo) com bolhas de categoria distribuidas ao redor,
@@ -1080,27 +2316,47 @@ class MainActivity : Activity() {
         if (w <= 0 || h <= 0) return
         val centerX = w / 2f
         val centerY = h / 2f
-        val centerSize = dp(230)
+        val centerSize = (minOf(w, h) * 0.43f).toInt()
+        val centerHaloSize = centerSize + dp(24)
 
         val categories = listOf(
-            OrbitCategory("ESPORTE", "Conexão", "⚽", 0xFF2BFFB0) { openCategoryByKeywords(listOf("futebol", "esporte", "sport"), "Esporte") },
-            OrbitCategory("CINEMA", "Estrelas", "🎬", 0xFFF5B93D) { switchSection(MediaKind.MOVIE) },
-            OrbitCategory("SÉRIES", "Universo", "📺", 0xFF4FC3F7) { switchSection(MediaKind.SERIES) },
-            OrbitCategory("FAVORITOS", "Memórias", "♡", 0xFFFF6EA8) { switchSection(MediaKind.LIVE); favoritesOnly = true; renderCategories(); renderCatalog() },
-            OrbitCategory("RÁDIOS", "Melodia", "♪", 0xFFB388FF) { openRadios() },
-            OrbitCategory("KIDS", "Sonhos", "★", 0xFFFF8A50) { openCategoryByKeywords(listOf("kids", "infantil", "desenho", "animação", "animacao"), "Kids") },
+            OrbitCategory("ESPORTE", "Conexão", R.drawable.orbit_icon_sport, 0xFF2BFFB0) { openCategoryByKeywords(listOf("futebol", "esporte", "sport"), "Esporte") },
+            OrbitCategory("CINEMATOGRÁFICOS", "FILMES", R.drawable.orbit_icon_cinema, 0xFFF5B93D) { switchSection(MediaKind.MOVIE) },
+            OrbitCategory("SÉRIES", "Universo", R.drawable.orbit_icon_series, 0xFF4FC3F7) { switchSection(MediaKind.SERIES) },
+            OrbitCategory("FAVORITOS", "Memórias", R.drawable.orbit_icon_favorites, 0xFFFF6EA8) { switchSection(MediaKind.LIVE); favoritesOnly = true; renderCategories(); renderCatalog() },
+            OrbitCategory("RÁDIOS", "Melodia", R.drawable.orbit_icon_radio, 0xFFB388FF) { switchRadio() },
+            OrbitCategory("KIDS", "Sonhos", R.drawable.orbit_icon_kids, 0xFFFF8A50) { openCategoryByKeywords(listOf("kids", "infantil", "desenho", "animação", "animacao"), "Kids") },
         )
 
-        // Centro: card grande com o conteudo em destaque (canal/filme mais assistido).
+        // Centro: esfera de conteúdo em destaque, com anel translúcido e leitura em camadas.
+        val centerHalo = View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(centerHaloSize, centerHaloSize).apply {
+                leftMargin = (centerX - centerHaloSize / 2f).toInt()
+                topMargin = (centerY - centerHaloSize / 2f).toInt()
+            }
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0x1A4968C7)
+                setStroke(dp(2), 0xAA6FA8FF.toInt())
+            }
+            alpha = 0.9f
+        }
+        homeOrbitRoot.addView(centerHalo)
+
         val center = FrameLayout(this).apply {
             layoutParams = FrameLayout.LayoutParams(centerSize, centerSize).apply {
                 leftMargin = (centerX - centerSize / 2f).toInt()
                 topMargin = (centerY - centerSize / 2f).toInt()
             }
-            background = ovalDrawable(0xFF0A0A1F)
+            background = GradientDrawable().apply {
+                shape = GradientDrawable.OVAL
+                setColor(0xFF0A1231.toInt())
+                setStroke(dp(2), 0xDD86B4FF.toInt())
+            }
             clipToOutline = true
             isFocusable = true
             isClickable = true
+            elevation = dp(8).toFloat()
         }
         val centerImage = ImageView(this).apply {
             layoutParams = FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT)
@@ -1125,6 +2381,10 @@ class MainActivity : Activity() {
             layoutParams = FrameLayout.LayoutParams(-1, -2, Gravity.BOTTOM).apply { setMargins(dp(12), 0, dp(12), dp(16)) }
         }
         center.addView(centerImage)
+        center.addView(View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+            background = GradientDrawable(GradientDrawable.Orientation.TOP_BOTTOM, intArrayOf(0x00000000, 0xE600071C.toInt()))
+        })
         center.addView(centerBadge)
         center.addView(centerTitle)
         center.setOnClickListener { switchSection(MediaKind.LIVE) }
@@ -1134,6 +2394,7 @@ class MainActivity : Activity() {
 
         repository.mostRecent(MediaKind.LIVE, hiddenGroups()) { entry ->
             if (entry != null) runOnUiThread {
+                homeFeaturedKey = entry.key
                 centerTitle.text = entry.name
                 val source = entry.logoUrl.ifBlank { entry.backdropUrl }
                 if (source.isNotBlank()) imageLoader.load(source, centerImage, R.drawable.future_home_hero)
@@ -1142,10 +2403,12 @@ class MainActivity : Activity() {
         }
 
         // Bolhas ao redor, distribuidas em circulo.
-        val radius = (minOf(w, h) / 2f) - dp(90)
-        val bubbleSize = dp(64)
+        val radius = minOf(w, h) * 0.38f
+        val bubbleSize = (minOf(w, h) * 0.075f).toInt().coerceAtLeast(dp(54))
         val points = mutableListOf<PointF>()
+        val satelliteLinks = mutableListOf<Pair<PointF, PointF>>()
         val bubbles = mutableListOf<View>()
+        val satelliteGroups = mutableListOf<List<View>>()
         categories.forEachIndexed { index, category ->
             val angle = (Math.PI * 2 * index / categories.size) - Math.PI / 2
             val bx = centerX + radius * Math.cos(angle).toFloat()
@@ -1157,15 +2420,15 @@ class MainActivity : Activity() {
                     leftMargin = (bx - bubbleSize / 2f).toInt()
                     topMargin = (by - bubbleSize / 2f).toInt()
                 }
-                background = ovalDrawable(category.color)
+                background = orbitalBubbleDrawable(category.color)
                 isFocusable = true
                 isClickable = true
                 foreground = ovalFocusRing()
             }
-            val icon = TextView(this).apply {
-                text = category.icon
-                gravity = Gravity.CENTER
-                textSize = 22f
+            val icon = ImageView(this).apply {
+                setImageResource(category.iconRes)
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                setPadding(dp(16), dp(16), dp(16), dp(16))
                 layoutParams = FrameLayout.LayoutParams(-1, -1)
             }
             bubble.addView(icon)
@@ -1174,11 +2437,46 @@ class MainActivity : Activity() {
             homeOrbitRoot.addView(bubble)
             bubbles.add(bubble)
 
+            val satellitePoints = orbitSatelliteIcons[category.label].orEmpty()
+            val satelliteSize = (bubbleSize * 0.43f).toInt().coerceAtLeast(dp(24))
+            val satelliteDistance = bubbleSize * 0.98f
+            val satellitesForCategory = mutableListOf<View>()
+            satellitePoints.forEachIndexed { satelliteIndex, iconRes ->
+                val satelliteAngle = angle + (-0.95 + satelliteIndex * 0.63)
+                val distance = satelliteDistance + if (satelliteIndex % 2 == 0) dp(5) else 0
+                val sx = bx + distance * Math.cos(satelliteAngle).toFloat()
+                val sy = by + distance * Math.sin(satelliteAngle).toFloat()
+                val satellite = ImageView(this).apply {
+                    layoutParams = FrameLayout.LayoutParams(satelliteSize, satelliteSize).apply {
+                        leftMargin = (sx - satelliteSize / 2f).toInt()
+                        topMargin = (sy - satelliteSize / 2f).toInt()
+                    }
+                    setImageResource(iconRes)
+                    scaleType = ImageView.ScaleType.CENTER_INSIDE
+                    setPadding(dp(6), dp(6), dp(6), dp(6))
+                    background = orbitalSatelliteDrawable(category.color)
+                    foreground = ovalFocusRing()
+                    alpha = 0.9f
+                    isFocusable = true
+                    isClickable = true
+                    setOnFocusChangeListener { view, hasFocus ->
+                        view.scaleX = if (hasFocus) 1.16f else 1f
+                        view.scaleY = if (hasFocus) 1.16f else 1f
+                    }
+                    setOnClickListener { category.action() }
+                }
+                homeOrbitRoot.addView(satellite)
+                satellitesForCategory += satellite
+                satelliteLinks += PointF(bx, by) to PointF(sx, sy)
+            }
+            satelliteGroups += satellitesForCategory
+
             val caption = TextView(this).apply {
                 text = "${category.sublabel}\n${category.label}"
                 gravity = Gravity.CENTER
-                setTextColor(Color.WHITE)
-                textSize = 10f
+                setTextColor(0xFFE3ECFF.toInt())
+                textSize = 11f
+                letterSpacing = 0.04f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 layoutParams = FrameLayout.LayoutParams(dp(90), -2).apply {
                     val captionAbove = by < centerY
@@ -1189,7 +2487,14 @@ class MainActivity : Activity() {
             homeOrbitRoot.addView(caption)
         }
         orbitBubbles = bubbles
-        orbitLines.setPoints(PointF(centerX, centerY), points)
+        orbitSatelliteGroups = satelliteGroups
+        orbitSatelliteParents = satelliteGroups.flatMapIndexed { index, group ->
+            group.map { it to bubbles[index] }
+        }.toMap()
+        orbitLines.setPoints(PointF(centerX, centerY), points, satelliteLinks)
+        orbitCenterCard?.post {
+            if (homeMode && currentFocus == null) orbitCenterCard?.requestFocus()
+        }
     }
 
     private fun ovalFocusRing(): android.graphics.drawable.Drawable {
@@ -1201,15 +2506,38 @@ class MainActivity : Activity() {
     }
 
     private fun openRadios() {
-        radioMode = true
-        homeMode = false
-        homePanel.visibility = View.GONE
-        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
-        findViewById<View>(R.id.channelColumn).visibility = View.VISIBLE
-        findViewById<View>(R.id.previewScroll).visibility = View.VISIBLE
-        renderCategories()
-        renderCatalog()
-        selectFirstVisible()
+        switchRadio()
+    }
+
+    private fun openSportsDayCategory() {
+        if (!databaseBackedCatalog) {
+            Toast.makeText(this, "Catálogo ainda carregando, tente novamente em instantes.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        repository.queryGroups(MediaKind.LIVE, hiddenGroups(), includeAdult = false) { groups ->
+            runOnUiThread {
+                fun normalized(value: String): String = java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
+                    .replace(Regex("\\p{InCombiningDiacriticalMarks}+"), "")
+                    .lowercase(Locale.ROOT)
+                    .trim()
+                val match = groups.firstOrNull { normalized(it) == "jogos do dia" || normalized(it) == "jogos dos dias" }
+                    ?: groups.firstOrNull { normalized(it).contains("jogos") && normalized(it).contains("dia") }
+                    ?: groups.firstOrNull { normalized(it).contains("jogos") }
+                    ?: groups.firstOrNull { group ->
+                        val value = normalized(group)
+                        value.contains("futebol") || value.contains("esporte") || value.contains("sport")
+                    }
+                if (match == null) {
+                    Toast.makeText(this, "A pasta Jogos do Dia não foi encontrada em Canais.", Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                switchSection(MediaKind.LIVE, autoSelectFirst = false)
+                selectedCategory = match
+                renderCategories()
+                renderCatalog()
+                selectFirstVisible()
+            }
+        }
     }
 
     private fun openCategoryByKeywords(keywords: List<String>, label: String) {
@@ -1243,6 +2571,66 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun normalizeHomeCategory(value: String): String =
+        java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{M}+"), "")
+            .trim()
+            .lowercase()
+
+    private fun openHomeSeriesCategory(category: HomeSeriesCategory) {
+        if (!databaseBackedCatalog) {
+            Toast.makeText(this, "Catálogo ainda carregando, tente novamente em instantes.", Toast.LENGTH_SHORT).show()
+            return
+        }
+        val label = when (category) {
+            HomeSeriesCategory.DORAMAS -> "Doramas"
+            HomeSeriesCategory.TURKISH_NOVELAS -> "Novelas Turcas"
+            HomeSeriesCategory.NOVELAS -> "Novelas"
+            HomeSeriesCategory.REELSHORTS -> "Reelshorts"
+            HomeSeriesCategory.ANIMES -> "Animes / Crunchyroll"
+        }
+        repository.queryGroups(MediaKind.SERIES, hiddenGroups(), includeAdult = false) { groups ->
+            runOnUiThread {
+                val match = groups.firstOrNull { group -> matchesHomeSeriesCategory(group, category) }
+                if (match == null) {
+                    val message = if (category == HomeSeriesCategory.ANIMES) {
+                        "Nenhuma categoria da Crunchyroll foi encontrada no catálogo."
+                    } else if (catalogImportInProgress) {
+                        "Ainda carregando \"$label\" — tente novamente em alguns segundos."
+                    } else {
+                        "Nenhuma categoria de \"$label\" encontrada no seu catálogo."
+                    }
+                    Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                switchSection(MediaKind.SERIES, autoSelectFirst = false)
+                selectedCategory = match
+                renderCategories()
+                renderCatalog()
+                selectFirstVisible()
+            }
+        }
+    }
+
+    private fun matchesHomeSeriesCategory(group: String, category: HomeSeriesCategory): Boolean {
+        val value = normalizeHomeCategory(group)
+        val isTurkish = listOf("turca", "turcas", "turco", "turcos", "turkish", "turk").any(value::contains)
+        val isNovel = value.contains("novela")
+        val isDorama = value.contains("dorama") || value.contains("k-drama") || value.contains("k drama")
+        return when (category) {
+            HomeSeriesCategory.DORAMAS -> isDorama && !isTurkish
+            // O kind já está restrito a SERIES; portanto, basta o grupo ser
+            // identificado como turco, mesmo que o provedor o nomeie apenas
+            // como "Turcas" ou "Turkish" sem escrever "Novelas".
+            HomeSeriesCategory.TURKISH_NOVELAS -> isTurkish
+            HomeSeriesCategory.NOVELAS -> isNovel && !isTurkish && !isDorama
+            HomeSeriesCategory.REELSHORTS -> value.contains("reelshort") || value == "shorts" || value.contains("shorts")
+            // O pedido é que ANIMES sempre entre pela aba Crunchyroll; não
+            // aceitar outra categoria de anime evita abrir uma pasta errada.
+            HomeSeriesCategory.ANIMES -> value.contains("crunchyroll")
+        }
+    }
+
     private fun openFeaturedEntry(entry: CatalogEntry) {
         suppressAutoSelectFirst = true
         switchSection(entry.kind, autoSelectFirst = false)
@@ -1273,7 +2661,7 @@ class MainActivity : Activity() {
         nowCard.visibility = if (kind == MediaKind.LIVE) View.VISIBLE else View.GONE
         detailDescription.text = when (kind) {
             MediaKind.LIVE -> "Selecione um canal para visualizar os detalhes."
-            MediaKind.MOVIE -> "Selecione um filme para visualizar o trailer e os detalhes."
+            MediaKind.MOVIE -> "Selecione um filme para visualizar arte, metadados e sinopse."
             MediaKind.SERIES -> "Nenhuma série foi encontrada nesta lista do painel."
         }
         nowLabel.text = "DETALHES"
@@ -1288,20 +2676,25 @@ class MainActivity : Activity() {
     }
 
     private fun switchSection(kind: MediaKind, autoSelectFirst: Boolean = true) {
+        playConstellationTransition()
         parentalUnlocked = false
         radioMode = false
         voiceMode = false
+        settingsMode = false
+        settingsPanel?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        settingsPanel = null
         radioDialog?.dismiss()
         seriesEpisodesDialog?.dismiss()
         seriesSeasonsDialog?.dismiss()
         stopMiniPlayer()
         selectedEntry = null
+        focusCatalogWhenReady = false
         clearPreviewForSection(kind)
         homeMode = false
         homePanel.visibility = View.GONE
-        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
-        findViewById<View>(R.id.channelColumn).visibility = View.VISIBLE
-        findViewById<View>(R.id.previewScroll).visibility = View.VISIBLE
+        setSidebarBrandVisible(false)
+        showInternalShell()
+        setInternalCategoryVisibility(true)
         vodSection.visibility = View.GONE
         vodCards.removeAllViews()
         favoritesOnly = false
@@ -1314,7 +2707,7 @@ class MainActivity : Activity() {
         }
         selectedCategory = "Todos"
         query = ""
-        searchHint.text = searchPlaceholder()
+        searchHint.text = "⌕"
         channelHeading.text = when (kind) {
             MediaKind.LIVE -> "CANAIS AO VIVO"
             MediaKind.MOVIE -> "FILMES"
@@ -1324,37 +2717,44 @@ class MainActivity : Activity() {
         renderCategories()
         renderCatalog()
         if (autoSelectFirst) selectFirstVisible()
+        if (!databaseBackedCatalog) restoreCachedCatalogIfNeeded()
         categoryList.post { focusFirstCategory() }
     }
 
     private fun switchFavorites() {
+        playConstellationTransition()
         parentalUnlocked = false
         radioMode = false
         voiceMode = false
+        settingsMode = false
+        settingsPanel?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        settingsPanel = null
         radioDialog?.dismiss()
         seriesEpisodesDialog?.dismiss()
         seriesSeasonsDialog?.dismiss()
         stopMiniPlayer()
         selectedEntry = null
+        focusCatalogWhenReady = false
         clearPreviewForSection(MediaKind.LIVE)
         vodSection.visibility = View.GONE
         vodCards.removeAllViews()
         homeMode = false
         homePanel.visibility = View.GONE
-        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
-        findViewById<View>(R.id.channelColumn).visibility = View.VISIBLE
-        findViewById<View>(R.id.previewScroll).visibility = View.VISIBLE
+        setSidebarBrandVisible(false)
+        showInternalShell()
+        setInternalCategoryVisibility(true)
         favoritesOnly = true
         categoryRequestId++
         liveHeader.text = "◉  Favoritos"
         selectedCategory = "Todos"
         query = ""
-        searchHint.text = "Buscar favoritos..."
+        searchHint.text = "⌕"
         channelHeading.text = "FAVORITOS"
         renderNavigation()
         renderCategories()
         renderCatalog()
         selectFirstVisible()
+        if (!databaseBackedCatalog) restoreCachedCatalogIfNeeded()
         categoryList.post { focusFirstCategory() }
     }
 
@@ -1391,16 +2791,31 @@ class MainActivity : Activity() {
         for (i in 0 until categoryList.childCount) {
             val view = categoryList.getChildAt(i) as? TextView ?: continue
             val category = view.text.toString()
-            view.setTextColor(if (category == selectedCategory) Color.rgb(43, 255, 176) else Color.rgb(170, 177, 199))
-            view.background = rounded(if (category == selectedCategory) 0x332BFFB0 else 0x00111629, 18f)
+            val active = category == selectedCategory
+            view.setTextColor(if (active) Color.rgb(122, 255, 224) else Color.rgb(178, 207, 237))
+            view.background = categoryChipDrawable(active, view.hasFocus())
+        }
+    }
+
+    private fun categoryChipDrawable(active: Boolean, focused: Boolean): GradientDrawable = GradientDrawable().apply {
+        val fill = when {
+            active -> 0x4A1F6F86
+            focused -> 0x3A2A5875
+            else -> 0x2615223D
+        }
+        setColor(Color.argb((fill shr 24 and 0xFF).toInt(), (fill shr 16 and 0xFF).toInt(), (fill shr 8 and 0xFF).toInt(), (fill and 0xFF).toInt()))
+        cornerRadius = 20f
+        when {
+            active -> setStroke(2, Color.rgb(68, 238, 255))
+            focused -> setStroke(1, Color.rgb(119, 210, 255))
         }
     }
 
     private fun paintSortButtons() {
         listOf(sortRecentButton to SortMode.RECENT, sortAlphaButton to SortMode.ALPHABETICAL, sortRatingButton to SortMode.RATING).forEach { (button, mode) ->
             val active = sortMode == mode
-            button.setTextColor(if (active) Color.rgb(43, 255, 176) else Color.rgb(170, 177, 199))
-            button.background = rounded(if (active) 0x332BFFB0 else 0x14FFFFFF, 14f)
+            button.setTextColor(if (active) Color.rgb(232, 250, 255) else Color.rgb(170, 196, 228))
+            button.background = categoryChipDrawable(active, button.hasFocus())
         }
     }
 
@@ -1463,11 +2878,11 @@ class MainActivity : Activity() {
                 id = View.generateViewId()
                 text = category
                 gravity = Gravity.CENTER
-                textSize = 13f
+                textSize = 12f
                 isFocusable = true
                 isClickable = true
-                setPadding(12, 7, 12, 7)
-                layoutParams = LinearLayout.LayoutParams(-2, -1).apply { setMargins(3, 0, 3, 0) }
+                setPadding(dp(14), dp(8), dp(14), dp(8))
+                layoutParams = LinearLayout.LayoutParams(-2, dp(46)).apply { setMargins(dp(4), dp(7), dp(4), dp(7)) }
                 setOnClickListener {
                     val applyCategory = {
                         if (selectedCategory == ContentSafety.LOCKED_CATEGORY && category != ContentSafety.LOCKED_CATEGORY) {
@@ -1487,14 +2902,11 @@ class MainActivity : Activity() {
                     }
                 }
                 setOnFocusChangeListener { view, hasFocus ->
-                    view.background = rounded(
-                        if (hasFocus || category == selectedCategory) 0x332BFFB0 else 0x00111629,
-                        18f,
-                    )
+                    view.background = categoryChipDrawable(category == selectedCategory, hasFocus)
                 }
             }
-            item.setTextColor(if (category == selectedCategory) Color.rgb(43, 255, 176) else Color.rgb(170, 177, 199))
-            item.background = rounded(if (category == selectedCategory) 0x332BFFB0 else 0x00111629, 18f)
+            item.setTextColor(if (category == selectedCategory) Color.rgb(122, 255, 224) else Color.rgb(178, 207, 237))
+            item.background = categoryChipDrawable(category == selectedCategory, item.hasFocus())
             categoryList.addView(item)
         }
         configureExplicitFocusGraph()
@@ -1544,6 +2956,17 @@ class MainActivity : Activity() {
                 if (requestId != pageRequestId) return@runOnUiThread
                 pageLoading = false
                 if (page.isEmpty()) {
+                    // Durante a importação o SQLite pode estar entre dois
+                    // commits. Não transformar esse intervalo transitório em
+                    // uma tela permanentemente vazia; tenta novamente quando
+                    // o próximo lote estiver disponível.
+                    if (catalogImportStillRunning()) {
+                        pageFinished = false
+                        mainHandler.postDelayed({
+                            if (requestId == pageRequestId && !pageLoading) loadNextPage()
+                        }, 1_200L)
+                        return@runOnUiThread
+                    }
                     pageFinished = true
                     if (offset == 0) {
                         selectedEntry = null
@@ -1566,8 +2989,9 @@ class MainActivity : Activity() {
                             layoutManager?.scrollToPositionWithOffset(anchorPosition, anchorOffset ?: 0)
                         }
                     }
-                    if (!suppressAutoSelectFirst && (selectedEntry == null || pagedItems.none { it.key == selectedEntry?.key })) selectEntry(page.first(), false)
-                    if (focusCatalogWhenReady) {
+                val browsingCatalog = isWithin(currentFocus, channelList) || isWithin(currentFocus, categoryList)
+                if (!suppressAutoSelectFirst && !browsingCatalog && (selectedEntry == null || pagedItems.none { it.key == selectedEntry?.key })) selectEntry(page.first(), false)
+                if (focusCatalogWhenReady) {
                         focusCatalogWhenReady = false
                         channelList.post { focusFirstCatalogItem() }
                     }
@@ -1742,36 +3166,30 @@ class MainActivity : Activity() {
             requestAdultAccess { handleEntryClick(entry) }
             return
         }
+        recordWatch(entry)
         val sameEntry = miniPlayerEntryKey == entry.key
         if (isSeriesRootEntry(entry)) {
-            if (sameEntry && previewMode == PreviewMode.TRAILER) {
-                showSeriesSeasonsDialog(entry)
-            } else {
-                selectEntry(entry, true)
-                startTrailerPreview(entry)
-            }
+            selectEntry(entry, true)
             return
         }
-        if (sameEntry && previewMode == PreviewMode.TRAILER) {
-            openEntry(entry)
-            return
-        }
-        if (sameEntry && previewMode == PreviewMode.CONTENT) {
+        if (entry.kind == MediaKind.LIVE && sameEntry && previewMode == PreviewMode.CONTENT) {
             expandMiniPlayer()
             return
         }
         selectEntry(entry, true)
-        if (entry.kind == MediaKind.MOVIE) {
-            startTrailerPreview(entry)
-        } else if (entry.kind == MediaKind.SERIES) {
-            startTrailerPreview(entry)
-        } else {
+        if (entry.kind == MediaKind.LIVE) {
             recordChannelWatch(entry)
             startMiniPlayer(entry)
         }
+        // Filmes e séries permanecem sem mini player: o card apenas seleciona
+        // o conteúdo e o botão principal abre a reprodução em tela cheia.
     }
 
     private fun startContentPreview(entry: CatalogEntry) {
+        if (entry.kind != MediaKind.LIVE) {
+            openEntry(entry)
+            return
+        }
         if (entry.streamUrl.isBlank()) {
             Toast.makeText(this, "Este item não possui o filme/episódio disponível na lista do painel", Toast.LENGTH_SHORT).show()
             return
@@ -1805,6 +3223,10 @@ class MainActivity : Activity() {
     }
 
     private fun startMiniPlayer(entry: CatalogEntry, sourceUrl: String = entry.streamUrl, previewTitle: String = entry.name, mode: PreviewMode = PreviewMode.CONTENT) {
+        if (entry.kind != MediaKind.LIVE) {
+            openEntry(entry)
+            return
+        }
         if (sourceUrl.isBlank()) {
             Toast.makeText(this, "Este item não possui uma transmissão válida", Toast.LENGTH_SHORT).show()
             return
@@ -1848,16 +3270,73 @@ class MainActivity : Activity() {
         videoPreviewText.text = "Mini player • $previewTitle"
     }
 
-    private fun startTrailerPreview(entry: CatalogEntry) {
-        val trailer = entry.trailerUrl.trim()
+    private fun scheduleTrailerPreview(entry: CatalogEntry) {
+        trailerFocusToken++
+        val token = trailerFocusToken
+        trailerFocusEntryKey = entry.key
+        if (entry.kind != MediaKind.MOVIE && entry.kind != MediaKind.SERIES) {
+            if (miniTrailerView != null) stopMiniPlayer()
+            return
+        }
+        if (miniTrailerView != null && miniPlayerEntryKey != entry.key) stopMiniPlayer()
+        if (miniTrailerView != null && miniPlayerEntryKey == entry.key && previewMode == PreviewMode.TRAILER) return
+        // Começa a preparar o YouTube imediatamente, mas deixa a área invisível
+        // durante a janela de cinco segundos do foco.
+        startTrailerPreview(entry, revealImmediately = false)
+        mainHandler.postDelayed({
+            if (token != trailerFocusToken || trailerFocusEntryKey != entry.key || selectedEntry?.key != entry.key) return@postDelayed
+            if (miniPlayerEntryKey == entry.key && previewMode == PreviewMode.TRAILER) {
+                revealTrailerPreview(entry)
+            } else {
+                startTrailerPreview(entry, revealImmediately = true)
+            }
+        }, TRAILER_FOCUS_DELAY_MS)
+    }
+
+    private fun startTrailerPreview(entry: CatalogEntry, revealImmediately: Boolean = true) {
+        if (entry.kind != MediaKind.MOVIE && entry.kind != MediaKind.SERIES) return
+        val knownTrailer = entry.trailerUrl.trim().ifBlank { enrichedMetadata[entry.key]?.trailer.orEmpty().trim() }
+        videoPreview.visibility = if (revealImmediately) View.VISIBLE else View.INVISIBLE
+        val trailer = knownTrailer
         if (trailer.isBlank()) {
             startYoutubeTrailerSearchPreview(entry)
         } else if (trailer.contains("youtube.com", true) || trailer.contains("youtu.be", true)) {
             startYoutubeTrailerPreview(entry, trailer)
         } else {
-            startMiniPlayer(entry, trailer, "Trailer • ${entry.name}", PreviewMode.TRAILER)
+            // URL de vídeo direto também pode ser usado como trailer, mas sem
+            // transformar filmes/séries em mini player de canal.
+            startVODTrailerWebView(entry, trailer)
+        }
+        if (!revealImmediately) {
+            miniTrailerView?.visibility = View.INVISIBLE
+            videoPreview.visibility = View.INVISIBLE
         }
     }
+
+    private fun revealTrailerPreview(entry: CatalogEntry) {
+        if (miniPlayerEntryKey != entry.key || previewMode != PreviewMode.TRAILER) return
+        videoPreview.visibility = View.VISIBLE
+        miniTrailerView?.visibility = View.VISIBLE
+        miniTrailerView?.alpha = 1f
+        heroImage.visibility = View.GONE
+        liveBadge.visibility = View.VISIBLE
+        liveBadge.text = "TRAILER"
+        showPreviewScaleControl()
+    }
+
+    private fun startVODTrailerWebView(entry: CatalogEntry, url: String) {
+        stopMiniPlayer()
+        val webView = createYoutubeWebView()
+        webView.webViewClient = object : WebViewClient() {
+            override fun onPageFinished(view: WebView?, pageUrl: String?) {
+                super.onPageFinished(view, pageUrl)
+                view?.alpha = 1f
+            }
+        }
+        registerTrailerView(entry, webView)
+        webView.loadUrl(url)
+    }
+
 
     private fun startYoutubeTrailerSearchPreview(entry: CatalogEntry) {
         stopMiniPlayer()
@@ -2222,12 +3701,11 @@ class MainActivity : Activity() {
         val epgProgram = currentEpgProgram(epgPrograms)
         val isLive = entry.kind == MediaKind.LIVE
         val isSeriesRoot = isSeriesRootEntry(entry)
-        val hasTrailer = !isSeriesRoot && (entry.trailerUrl.isNotBlank() || entry.kind == MediaKind.MOVIE)
         videoPreviewText.text = when {
-            isLive -> "Preview • ${entry.name}"
-            isSeriesRoot -> "Série • ${seriesTitle(entry)}"
-            hasTrailer -> "▶  Trailer • ${entry.name}"
-            else -> "Poster • ${entry.name}"
+            isLive -> "AO VIVO  •  ${entry.name}"
+            isSeriesRoot -> "SÉRIE  •  ${seriesTitle(entry)}"
+            entry.kind == MediaKind.MOVIE -> "FILME  •  ${entry.name}"
+            else -> "CONTEÚDO  •  ${entry.name}"
         }
         val metadata = enrichedMetadata[entry.key]
         val heroSource = metadata?.backdrop?.takeIf { it.isNotBlank() } ?: entry.backdropUrl.ifBlank { entry.logoUrl }
@@ -2238,8 +3716,15 @@ class MainActivity : Activity() {
             imageLoader.load(heroSource, heroImage, fallbackHero(entry))
         }
         previewLogo.visibility = View.GONE
-        liveBadge.visibility = if (isLive || hasTrailer) View.VISIBLE else View.GONE
-        liveBadge.text = if (isLive) "AO VIVO" else "TRAILER"
+        liveBadge.visibility = if (isLive) View.VISIBLE else View.GONE
+        liveBadge.text = "AO VIVO"
+        if (!isLive) {
+            stopMiniPlayer()
+            videoPreview.visibility = View.VISIBLE
+            previewScaleButton.visibility = View.GONE
+        } else {
+            videoPreview.visibility = View.VISIBLE
+        }
         detailEyebrow.text = if (isLive) editorial.eyebrow.uppercase() else kindLabel(entry.kind)
         detailChannelName.text = if (isSeriesRoot) seriesTitle(entry) else entry.name
         detailTags.text = listOf(entry.groupTitle, metadata?.year?.ifBlank { entry.year } ?: entry.year, entry.quality, kindLabel(entry.kind), entry.runtime)
@@ -2257,7 +3742,7 @@ class MainActivity : Activity() {
         nextProgram.visibility = if (isLive && epgPrograms.isEmpty()) View.VISIBLE else View.GONE
         nextProgram.text = if (isLive) {
             epgPrograms.dropWhile { it !== epgProgram }.drop(1).firstOrNull()?.let { "A seguir  •  ${it.title}  •  ${formatTime(it.start)}" } ?: editorial.nextProgram
-        } else if (isSeriesRoot) "☷  Abrir temporadas" else if (hasTrailer) "▶  Assistir trailer" else "▶  Assistir conteúdo"
+        } else if (isSeriesRoot) "☷  Abrir temporadas" else "▶  Abrir em tela cheia"
         renderActions(entry)
         if (entry.kind == MediaKind.MOVIE || entry.kind == MediaKind.SERIES) enrichEntryMetadata(entry)
         // Do not submit/replace the adapter from a focus-change callback. The
@@ -2268,11 +3753,12 @@ class MainActivity : Activity() {
             channelList.post {
                 configureExplicitFocusGraph()
                 if (!focusSelectedCatalogItem()) {
-                    val key = selectedEntry?.key
-                    val position = catalogAdapter.positionOf(key)
-                    val keySuffix = key?.takeLast(24) ?: "null"
-                    Toast.makeText(this, "DIAG2: pos=$position itens=${catalogAdapter.itemCount} key...$keySuffix", Toast.LENGTH_LONG).show()
-                    focusFirstCatalogItem()
+                    // O item pode ainda estar sendo anexado por paginação. Tenta
+                    // novamente o mesmo item, nunca o primeiro card.
+                    val selectedKey = selectedEntry?.key
+                    channelList.postDelayed({
+                        if (selectedEntry?.key == selectedKey) focusSelectedCatalogItem()
+                    }, 160L)
                 }
             }
         } else {
@@ -2329,21 +3815,17 @@ class MainActivity : Activity() {
         val actions = mutableListOf<Pair<String, () -> Unit>>()
         val isSeriesRoot = isSeriesRootEntry(entry)
         val primaryLabel = when {
-            isSeriesRoot && miniPlayerEntryKey == entry.key && previewMode == PreviewMode.TRAILER -> "☷  TEMPORADAS"
-            isSeriesRoot -> "▶  REPRODUZIR SÉRIE"
-            entry.kind == MediaKind.MOVIE && miniPlayerEntryKey == entry.key && previewMode == PreviewMode.TRAILER -> "▶  ASSISTIR FILME"
-            entry.kind == MediaKind.MOVIE -> "▶  TRAILER NO YOUTUBE"
+            isSeriesRoot -> "☷  TEMPORADAS"
+            entry.kind == MediaKind.MOVIE -> "▶  ASSISTIR FILME"
             entry.kind == MediaKind.SERIES && entry.episode.isNotBlank() -> "▶  REPRODUZIR EPISÓDIO"
+            entry.kind == MediaKind.LIVE -> "▶  ABRIR AO VIVO"
             else -> "▶  REPRODUZIR"
         }
         actions += primaryLabel to {
-            val sameEntry = miniPlayerEntryKey == entry.key
             when {
-                sameEntry && previewMode == PreviewMode.TRAILER -> if (isSeriesRoot) showSeriesSeasonsDialog(entry) else openEntry(entry)
-                sameEntry && previewMode == PreviewMode.CONTENT -> expandMiniPlayer()
-                isSeriesRoot -> startTrailerPreview(entry)
-                entry.kind == MediaKind.MOVIE -> startTrailerPreview(entry)
-                entry.kind == MediaKind.SERIES && entry.episode.isNotBlank() -> startTrailerPreview(entry)
+                isSeriesRoot -> showSeriesSeasonsDialog(entry)
+                entry.kind == MediaKind.MOVIE || entry.kind == MediaKind.SERIES -> openEntry(entry)
+                miniPlayerEntryKey == entry.key && previewMode == PreviewMode.CONTENT -> expandMiniPlayer()
                 else -> startMiniPlayer(entry)
             }
         }
@@ -2377,8 +3859,10 @@ class MainActivity : Activity() {
                     (view as TextView).setTextColor(Color.WHITE)
                 }
                 setOnClickListener { clickAction() }
-                layoutParams = LinearLayout.LayoutParams(-1, dp(54)).apply {
-                    setMargins(0, 0, 0, dp(8))
+                layoutParams = if (actionRow.orientation == LinearLayout.HORIZONTAL) {
+                    LinearLayout.LayoutParams(0, dp(46), 1f).apply { setMargins(0, 0, dp(8), 0) }
+                } else {
+                    LinearLayout.LayoutParams(-1, dp(54)).apply { setMargins(0, 0, 0, dp(8)) }
                 }
             }
             actionRow.addView(action)
@@ -2392,6 +3876,7 @@ class MainActivity : Activity() {
             requestAdultAccess { openEntry(entry) }
             return
         }
+        recordWatch(entry)
         if (entry.streamUrl.isBlank()) {
             Toast.makeText(this, "Este item não possui URL válida na lista do painel", Toast.LENGTH_SHORT).show()
             loadRemoteConfiguration()
@@ -2924,7 +4409,7 @@ class MainActivity : Activity() {
             .setNegativeButton("Cancelar", null)
             .setPositiveButton("Buscar") { _, _ ->
                 query = input.text.toString()
-                searchHint.text = if (query.isBlank()) searchPlaceholder() else query
+                searchHint.text = "⌕"
                 renderCatalog()
                 selectFirstVisible()
             }
@@ -2981,8 +4466,11 @@ class MainActivity : Activity() {
         val manualDns = prefs.getString(ActivationActivity.PREF_MANUAL_DNS, "").orEmpty()
         val manualUser = prefs.getString(ActivationActivity.PREF_MANUAL_USER, "").orEmpty()
         val manualPassword = prefs.getString(ActivationActivity.PREF_MANUAL_PASSWORD, "").orEmpty()
+        val manualPlaylistUrl = if (manualDns.isNotBlank() && manualUser.isNotBlank() && manualPassword.isNotBlank()) {
+            "${manualDns.trimEnd('/')}/get.php?username=${java.net.URLEncoder.encode(manualUser, "UTF-8")}&password=${java.net.URLEncoder.encode(manualPassword, "UTF-8")}&type=m3u_plus&output=ts"
+        } else ""
         val manualEpgUrl = if (manualDns.isNotBlank() && manualUser.isNotBlank() && manualPassword.isNotBlank()) {
-            "$manualDns/xmltv.php?username=${java.net.URLEncoder.encode(manualUser, "UTF-8")}&password=${java.net.URLEncoder.encode(manualPassword, "UTF-8")}"
+            "${manualDns.trimEnd('/')}/xmltv.php?username=${java.net.URLEncoder.encode(manualUser, "UTF-8")}&password=${java.net.URLEncoder.encode(manualPassword, "UTF-8")}"
         } else ""
         val emptyConfig = RemoteAppConfig(
             registered = true, allowed = true, mac = "", appId = "maximus", appName = "Future",
@@ -2998,8 +4486,25 @@ class MainActivity : Activity() {
                     if (catalogImportAlreadyStarted && cached.totalCount < 4_000) {
                         greeting.text = "Olá, usuário  •  lista sendo atualizada..."
                     }
+                } else if (catalogImportAlreadyStarted) {
+                    // A Activity de ativação ainda está gravando o primeiro lote.
+                    // O watcher reabre o cache assim que houver dados confirmados.
+                    showCatalogUnavailable("Carregando canais, filmes e séries...")
+                } else if (manualPlaylistUrl.isNotBlank()) {
+                    // Instalações novas não possuem o cache da instalação anterior.
+                    // Nesse caso o modo DNS não pode parar numa tela vazia: importa
+                    // diretamente o get.php salvo nas preferências.
+                    repository.loadIfChanged(listOf(manualPlaylistUrl)) { result ->
+                        runOnUiThread {
+                            result.onSuccess { loaded ->
+                                applyCatalogSnapshot(loaded, emptyConfig.copy(playlistUrls = listOf(manualPlaylistUrl)))
+                            }.onFailure {
+                                showCatalogUnavailable("Não foi possível carregar a lista do DNS informado.")
+                            }
+                        }
+                    }
                 } else {
-                    showCatalogUnavailable("O catálogo inicial está sendo preparado.")
+                    showCatalogUnavailable("Configure o DNS, usuário e senha para carregar o catálogo.")
                 }
             }
         }
@@ -3087,6 +4592,12 @@ class MainActivity : Activity() {
         } else {
             "Olá, usuário  •  ${snapshot.totalCount} itens"
         }
+        // Só montar a Home uma vez enquanto a importação parcial cresce. Antes,
+        // homeFeaturedKey permanecia nulo até o primeiro tick e cada lote podia
+        // recriar o centro, reiniciando a rotação de quatro segundos.
+        if (wasHome && exactHomeHotspots.isEmpty()) {
+            renderExactHomeHotspots()
+        }
         if (!wasHome && !radioMode) {
             // As categorias (pílulas) ainda são reconstruídas inteiras sempre que
             // renderCategories() roda (mesmo quando o conteúdo final é igual),
@@ -3124,6 +4635,10 @@ class MainActivity : Activity() {
         renderCategories()
         renderCatalog()
         selectFirstVisible()
+        if (homeMode) {
+            homeFeaturedKey = null
+            renderExactHomeHotspots()
+        }
         loadConfiguredEpg(config.epgUrl.ifBlank { config.playlistUrls.firstOrNull().orEmpty() })
         if (currentFocus == null) channelList.post { focusFirstCatalogItem() || focusNavigationForCurrentSection() }
     }
@@ -3159,6 +4674,10 @@ class MainActivity : Activity() {
     }
 
     private fun showCatalogUnavailable(message: String) {
+        if (databaseBackedCatalog || catalog.totalCount > 0) {
+            Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+            return
+        }
         databaseBackedCatalog = false
         catalog = CatalogSnapshot(emptyList())
         categoryCache.clear()
@@ -3244,6 +4763,263 @@ class MainActivity : Activity() {
             "restart_player" -> appIntegration.ackCommand(mac, command.id, "executed", "Sessão pronta para reiniciar")
             else -> appIntegration.ackCommand(mac, command.id, "failed", "Comando não suportado")
         }
+    }
+
+    private fun focusFirstSettingsOption(): Boolean {
+        val panel = settingsPanel as? ViewGroup ?: return false
+        val scroll = panel.findViewWithTag<View>("settings_options_scroll") ?: return false
+        val list = scroll as? ScrollView ?: return false
+        val options = list.getChildAt(0) as? ViewGroup ?: return false
+        val target = options.getChildAt(0) ?: return false
+        target.isFocusable = true
+        return target.requestFocus()
+    }
+
+    private fun showSettingsScreen() {
+        parentalUnlocked = false
+        homeMode = false
+        radioMode = false
+        voiceMode = false
+        favoritesOnly = false
+        settingsMode = true
+        mainHandler.removeCallbacks(homeClockTicker)
+        homePanel.visibility = View.GONE
+        showInternalShell()
+        setInternalCategoryVisibility(false)
+        findViewById<View>(R.id.channelColumn).visibility = View.GONE
+        findViewById<View>(R.id.previewScroll).visibility = View.GONE
+        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
+        setSidebarBrandVisible(false)
+        renderNavigation()
+        settingsPanel?.let { (it.parent as? ViewGroup)?.removeView(it) }
+
+        val panel = FrameLayout(this).apply {
+            setBackgroundColor(Color.rgb(5, 12, 30))
+            elevation = dp(8).toFloat()
+            layoutParams = FrameLayout.LayoutParams(-1, -1).apply { leftMargin = dp(92) }
+        }
+        panel.addView(ImageView(this).apply {
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+            alpha = 0.24f
+            scaleType = ImageView.ScaleType.CENTER_CROP
+            setImageResource(R.drawable.future_orbit_background)
+            contentDescription = null
+        })
+        panel.addView(View(this).apply {
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+            setBackgroundColor(0xC9071028.toInt())
+        })
+
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(28), dp(22), dp(30), dp(22))
+            layoutParams = FrameLayout.LayoutParams(-1, -1)
+        }
+        val header = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
+            layoutParams = LinearLayout.LayoutParams(-1, dp(68))
+        }
+        val headerText = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+        }
+        headerText.addView(TextView(this).apply {
+            text = "CONFIGURAÇÕES"
+            textSize = 24f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+        })
+        headerText.addView(TextView(this).apply {
+            text = "Personalize sua experiência no FUTURE"
+            textSize = 12f
+            setTextColor(Color.rgb(164, 198, 231))
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(5) }
+        })
+        header.addView(headerText)
+        header.addView(TextView(this).apply {
+            text = "●  CONECTADO"
+            textSize = 11f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.rgb(123, 255, 207))
+            gravity = Gravity.CENTER
+            background = settingsGlassDrawable(false, false)
+            setPadding(dp(14), dp(9), dp(14), dp(9))
+        })
+        content.addView(header)
+
+        val body = LinearLayout(this).apply {
+            orientation = LinearLayout.HORIZONTAL
+            layoutParams = LinearLayout.LayoutParams(-1, 0, 1f).apply { topMargin = dp(14) }
+        }
+        val optionsScroll = ScrollView(this).apply {
+            tag = "settings_options_scroll"
+            isFillViewport = true
+            isFocusable = false
+            clipToPadding = false
+            layoutParams = LinearLayout.LayoutParams(0, -1, 0.46f).apply { marginEnd = dp(16) }
+            setPadding(0, 0, dp(4), dp(4))
+        }
+        val optionsList = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            layoutParams = ViewGroup.LayoutParams(-1, -2)
+        }
+        data class SettingOption(val icon: Int, val title: String, val subtitle: String, val action: () -> Unit)
+        val options = listOf(
+            SettingOption(R.drawable.ic_nav_settings, "Controle parental", "PIN e proteção de conteúdo") { showParentalControlDialog() },
+            SettingOption(R.drawable.ic_nav_live, "Áudio e reprodução", "Player, trailers e tela cheia") { showPlaybackSettingsDialog() },
+            SettingOption(R.drawable.ic_nav_movies, "Legendas e idioma", "Idioma e preferências de exibição") { showSubtitleLanguageDialog() },
+            SettingOption(R.drawable.ic_nav_voice, "Comando de voz", "Ative a busca por voz") { startVoiceCommand() },
+            SettingOption(R.drawable.ic_nav_radio, "Rádio", "Categorias e estações favoritas") { switchRadio() },
+            SettingOption(R.drawable.ic_nav_live, "EPG e programação", "Agora, a seguir e próximos programas") { showEpgSettingsDialog() },
+            SettingOption(R.drawable.ic_nav_favorites, "Estrelas da transição", if (transitionStarsEnabled()) "Estrelas brilhando ativadas" else "Estrelas brilhando desativadas") { },
+            SettingOption(R.drawable.ic_nav_radio, "Som da transição", if (transitionSoundEnabled()) "Efeito sonoro ativado" else "Efeito sonoro desativado") { },
+            SettingOption(R.drawable.ic_nav_settings, "DNS do painel", "Conexão com o servidor autorizado") { showDnsDialog() },
+            SettingOption(R.drawable.ic_nav_movies, "Playlists e cache", "Listas recebidas e armazenamento local") { showPlaylistSettingsDialog() },
+            SettingOption(R.drawable.ic_nav_series, "Categorias e ordem", "Categorias ocultas e organização") { showCatalogRulesDialog() },
+            SettingOption(R.drawable.ic_nav_voice, "Sincronização", "Atualizações e notificações do painel") { showSyncSettingsDialog() },
+            SettingOption(R.drawable.ic_nav_favorites, "Sobre o Future", "Versão e informações do aplicativo") { showAboutDialog() },
+            SettingOption(R.drawable.ic_nav_settings, "Testar API do servidor", "Verifique a conexão com o painel") { showServerTestDialog() },
+            SettingOption(R.drawable.ic_nav_settings, "Verificar atualização", "Procure uma nova versão do aplicativo") { checkForAppUpdate() },
+            SettingOption(R.drawable.ic_nav_settings, "Sair do aplicativo", "Encerrar a sessão do Future") { showExitConfirmation() },
+        )
+        var firstOption: View? = null
+        options.forEach { option ->
+            val isStarsToggle = option.title == "Estrelas da transição"
+            val isSoundToggle = option.title == "Som da transição"
+            var toggle: CheckBox? = null
+            val row = LinearLayout(this).apply {
+                orientation = LinearLayout.HORIZONTAL
+                gravity = Gravity.CENTER_VERTICAL
+                isFocusable = true
+                isClickable = true
+                setPadding(dp(14), dp(10), dp(14), dp(10))
+                layoutParams = LinearLayout.LayoutParams(-1, dp(76)).apply { setMargins(0, 0, 0, dp(8)) }
+                background = settingsGlassDrawable(false, false)
+                contentDescription = if (isStarsToggle) "Estrelas da transição: ${if (transitionStarsEnabled()) "ativadas" else "desativadas"}" else if (isSoundToggle) "Som da transição: ${if (transitionSoundEnabled()) "ativado" else "desativado"}" else option.title
+                setOnFocusChangeListener { view, hasFocus -> view.background = settingsGlassDrawable(hasFocus, false) }
+                setOnClickListener {
+                    if (isStarsToggle || isSoundToggle) toggle?.isChecked = !(toggle?.isChecked ?: false) else option.action()
+                }
+            }
+            if (firstOption == null) firstOption = row
+            row.addView(ImageView(this).apply {
+                setImageResource(option.icon)
+                imageTintList = android.content.res.ColorStateList.valueOf(Color.rgb(208, 235, 255))
+                scaleType = ImageView.ScaleType.CENTER_INSIDE
+                layoutParams = LinearLayout.LayoutParams(dp(42), dp(42)).apply { marginEnd = dp(14) }
+            })
+            val labels = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                layoutParams = LinearLayout.LayoutParams(0, -2, 1f)
+            }
+            labels.addView(TextView(this).apply {
+                text = option.title
+                textSize = 14f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(Color.WHITE)
+            })
+            labels.addView(TextView(this).apply {
+                text = option.subtitle
+                textSize = 10f
+                setTextColor(Color.rgb(163, 193, 225))
+                layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
+            })
+            row.addView(labels)
+            if (isStarsToggle || isSoundToggle) {
+                toggle = CheckBox(this).apply {
+                    isFocusable = false
+                    isClickable = false
+                    isChecked = if (isStarsToggle) transitionStarsEnabled() else transitionSoundEnabled()
+                    buttonTintList = android.content.res.ColorStateList.valueOf(Color.rgb(125, 246, 224))
+                    setOnCheckedChangeListener { _, checked ->
+                        if (isStarsToggle) setTransitionStarsEnabled(checked) else setTransitionSoundEnabled(checked)
+                        row.contentDescription = if (isStarsToggle) "Estrelas da transição: ${if (checked) "ativadas" else "desativadas"}" else "Som da transição: ${if (checked) "ativado" else "desativado"}"
+                    }
+                    layoutParams = LinearLayout.LayoutParams(dp(48), dp(48))
+                }
+                row.addView(toggle)
+            } else row.addView(TextView(this).apply {
+                text = "›"
+                textSize = 27f
+                setTextColor(Color.rgb(133, 232, 255))
+                gravity = Gravity.CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(24), -1)
+            })
+            optionsList.addView(row)
+        }
+        optionsScroll.addView(optionsList)
+        body.addView(optionsScroll)
+
+        val summary = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            background = settingsGlassDrawable(false, false)
+            layoutParams = LinearLayout.LayoutParams(0, -1, 0.54f)
+        }
+        summary.addView(TextView(this).apply {
+            text = "CENTRAL DE CONTROLE"
+            textSize = 12f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.rgb(122, 255, 224))
+        })
+        summary.addView(TextView(this).apply {
+            text = "Tudo no seu ritmo"
+            textSize = 28f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.WHITE)
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(10) }
+        })
+        summary.addView(TextView(this).apply {
+            text = "A mesma experiência Future em todas as áreas: Canais, Filmes, Séries, Favoritos e Rádios. Use as opções ao lado para ajustar sua conta e sua programação."
+            textSize = 13f
+            setTextColor(Color.rgb(172, 201, 231))
+            setLineSpacing(dp(3).toFloat(), 1f)
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(12) }
+        })
+        val infoRows = listOf(
+            "CONTA ATIVA" to "Perfil conectado ao painel autorizado",
+            "EPG" to "Programação atualizada automaticamente",
+            "CONTROLE REMOTO" to "OK abre  •  Voltar retorna à Home",
+            "PRIVACIDADE" to "Dados e preferências ficam neste dispositivo",
+        )
+        infoRows.forEach { (label, value) ->
+            val info = LinearLayout(this).apply {
+                orientation = LinearLayout.VERTICAL
+                setPadding(0, dp(12), 0, dp(12))
+                layoutParams = LinearLayout.LayoutParams(-1, -2)
+            }
+            info.addView(TextView(this).apply {
+                text = label
+                textSize = 10f
+                setTypeface(typeface, android.graphics.Typeface.BOLD)
+                setTextColor(Color.rgb(112, 221, 255))
+            })
+            info.addView(TextView(this).apply {
+                text = value
+                textSize = 12f
+                setTextColor(Color.rgb(212, 229, 248))
+                layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(4) }
+            })
+            summary.addView(info)
+        }
+        body.addView(summary)
+        content.addView(body)
+        panel.addView(content)
+        settingsPanel = panel
+        (findViewById<ViewGroup>(R.id.rootShell)).addView(panel)
+        firstOption?.post { firstOption?.requestFocus() }
+    }
+
+    private fun settingsGlassDrawable(focused: Boolean, selected: Boolean): GradientDrawable = GradientDrawable().apply {
+        val fill = when {
+            selected -> 0x552D7894
+            focused -> 0x4A2D6688
+            else -> 0x32192C4B
+        }
+        setColor(Color.argb((fill shr 24 and 0xFF).toInt(), (fill shr 16 and 0xFF).toInt(), (fill shr 8 and 0xFF).toInt(), (fill and 0xFF).toInt()))
+        cornerRadius = dp(16).toFloat()
+        if (focused || selected) setStroke(dp(1), Color.rgb(113, 224, 255))
     }
 
     private fun showSettingsDialog() {
@@ -3522,19 +5298,39 @@ class MainActivity : Activity() {
 
     private fun trailerAudioEnabled(): Boolean = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).getBoolean(PREF_TRAILER_AUDIO, true)
 
+    private fun transitionPreferences() = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE)
+
+    private fun transitionStarsEnabled(): Boolean = transitionPreferences().getBoolean(PREF_TRANSITION_STARS, true)
+
+    private fun transitionSoundEnabled(): Boolean = transitionPreferences().getBoolean(PREF_TRANSITION_SOUND, true)
+
+    private fun setTransitionStarsEnabled(enabled: Boolean) {
+        transitionPreferences().edit().putBoolean(PREF_TRANSITION_STARS, enabled).apply()
+        if (!enabled && ::constellationTransition.isInitialized) constellationTransition.stop()
+    }
+
+    private fun setTransitionSoundEnabled(enabled: Boolean) {
+        transitionPreferences().edit().putBoolean(PREF_TRANSITION_SOUND, enabled).apply()
+        if (!enabled) constellationSound?.let { sound -> if (sound.isPlaying) sound.pause(); sound.seekTo(0) }
+    }
+
     private fun showRadioDialog() {
         switchRadio()
     }
 
     private fun switchRadio() {
+        playConstellationTransition()
         parentalUnlocked = false
         pageRequestId++
         pagedItems.clear()
         pageLoading = false
         pageFinished = true
         radioDialog?.dismiss()
+        settingsPanel?.let { (it.parent as? ViewGroup)?.removeView(it) }
+        settingsPanel = null
         radioMode = true
         voiceMode = false
+        settingsMode = false
         favoritesOnly = false
         homeMode = false
         seriesEpisodesDialog?.dismiss()
@@ -3557,13 +5353,12 @@ class MainActivity : Activity() {
             )
         }
         homePanel.visibility = View.GONE
-        findViewById<View>(R.id.sideNavigation).visibility = View.VISIBLE
-        findViewById<View>(R.id.channelColumn).visibility = View.VISIBLE
-        findViewById<View>(R.id.previewScroll).visibility = View.VISIBLE
+        showInternalShell()
+        setInternalCategoryVisibility(true)
         vodSection.visibility = View.GONE
         liveHeader.text = "◉  Rádios"
         channelHeading.text = "RÁDIO ONLINE"
-        searchHint.text = "Buscar estação..."
+        searchHint.text = "⌕"
                 renderNavigation()
         renderCategories()
         renderCatalog()
@@ -3589,17 +5384,62 @@ class MainActivity : Activity() {
     private fun handleVoiceCommand(spoken: String) {
         voiceMode = false
         renderNavigation()
-        val command = spoken.trim().lowercase(Locale.ROOT)
+        val raw = spoken.trim()
+        val command = raw.lowercase(Locale.ROOT)
         when {
-            command.contains("rádio") || command.contains("radio") -> { showRadioDialog(); Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show() }
-            command.contains("filme") -> { switchSection(MediaKind.MOVIE); Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show() }
-            command.contains("série") || command.contains("serie") -> { switchSection(MediaKind.SERIES); Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show() }
-            command.contains("canal") -> { switchSection(MediaKind.LIVE); Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show() }
-            command.contains("favorito") -> { switchFavorites(); Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show() }
-            command.contains("início") || command.contains("inicio") || command.contains("home") -> { showHome(); Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show() }
-            command.contains("buscar") || command.contains("pesquisar") -> { showSearchDialog(); Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show() }
-            else -> openBySpokenName(spoken.trim())
+            command.contains("rádio") || command.contains("radio") -> {
+                showRadioDialog()
+                Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show()
+            }
+            command.contains("filme") -> {
+                openVoiceSectionSearch(MediaKind.MOVIE, extractVoiceTitle(raw))
+            }
+            command.contains("série") || command.contains("serie") -> {
+                openVoiceSectionSearch(MediaKind.SERIES, extractVoiceTitle(raw))
+            }
+            command.contains("canal") -> {
+                switchSection(MediaKind.LIVE)
+                Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show()
+            }
+            command.contains("favorito") -> {
+                switchFavorites()
+                Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show()
+            }
+            command.contains("início") || command.contains("inicio") || command.contains("home") -> {
+                showHome()
+                Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show()
+            }
+            command.contains("buscar") || command.contains("pesquisar") -> {
+                showSearchDialog()
+                Toast.makeText(this, "Comando: $spoken", Toast.LENGTH_SHORT).show()
+            }
+            else -> openBySpokenName(raw)
         }
+    }
+
+    private fun extractVoiceTitle(spoken: String): String {
+        val marker = Regex("(?i)\\b(filme|filmes|série|series|séries)\\b").find(spoken)
+        if (marker == null) return spoken.trim()
+        return spoken.substring(marker.range.last + 1)
+            .trim()
+            .replace(Regex("(?i)^(de|do|da|o|a)\\s+"), "")
+            .trim()
+    }
+
+    private fun openVoiceSectionSearch(kind: MediaKind, title: String) {
+        val term = title.trim()
+        if (term.isBlank()) {
+            switchSection(kind)
+            return
+        }
+        switchSection(kind, autoSelectFirst = false)
+        selectedCategory = "Todos"
+        query = term
+        searchHint.text = "⌕  $term"
+        renderCategories()
+        renderCatalog()
+        categoryList.post { focusFirstCategory() }
+        Toast.makeText(this, "Buscando ${kindLabel(kind).lowercase(Locale.ROOT)}: $term", Toast.LENGTH_SHORT).show()
     }
 
     // Diz um nome (canal, filme ou série) e o app abre direto, seja qual for a
@@ -3609,7 +5449,7 @@ class MainActivity : Activity() {
         if (spokenQuery.isBlank()) return
         if (!databaseBackedCatalog) {
             query = spokenQuery
-            searchHint.text = query
+            searchHint.text = "⌕"
             if (radioMode) showRadioDialog() else { renderCatalog(); selectFirstVisible() }
             Toast.makeText(this, "Comando: $spokenQuery", Toast.LENGTH_SHORT).show()
             return
@@ -3630,7 +5470,7 @@ class MainActivity : Activity() {
                 Toast.makeText(this, "Abrindo \"${match.name}\"", Toast.LENGTH_SHORT).show()
             } else {
                 query = spokenQuery
-                searchHint.text = query
+                searchHint.text = "⌕"
                 if (radioMode) showRadioDialog() else { renderCatalog(); selectFirstVisible() }
                 Toast.makeText(this, "Nenhum resultado para \"$spokenQuery\"", Toast.LENGTH_SHORT).show()
             }
@@ -3761,6 +5601,7 @@ class MainActivity : Activity() {
             result.onSuccess { map ->
                 runOnUiThread {
                     epgByChannel = map
+                    exactHomeProgramEntry?.let { updateExactHomeProgram(it) }
                     selectedEntry?.let { selectEntry(it, false) }
                 }
             }
@@ -3815,18 +5656,42 @@ class MainActivity : Activity() {
 
     private fun formatTime(timestamp: Long): String = if (timestamp <= 0L) "--:--" else SimpleDateFormat("HH:mm", Locale.getDefault()).format(Date(timestamp))
 
+    private fun catalogImportStillRunning(): Boolean {
+        val prefs = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE)
+        return catalogImportInProgress || prefs.getBoolean(ActivationActivity.PREF_IMPORT_IN_PROGRESS, false)
+    }
+
     private fun hiddenGroups(): Set<String> = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).getStringSet(PREF_HIDDEN_GROUPS, emptySet())?.map { it.uppercase() }?.toSet() ?: emptySet()
 
     private fun isHidden(group: String): Boolean = group.uppercase() in hiddenGroups()
 
+    private fun profileScopedKey(base: String): String = "${base}_profile_${activeProfileId}"
+
     private fun favorites(): MutableSet<String> {
-        return getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).getStringSet(PREF_FAVORITES, emptySet())?.toMutableSet() ?: mutableSetOf()
+        val prefs = profilePreferences()
+        val scopedKey = profileScopedKey(PREF_FAVORITES)
+        if (prefs.contains(scopedKey)) return prefs.getStringSet(scopedKey, emptySet())?.toMutableSet() ?: mutableSetOf()
+        // Migração transparente: dados antigos ficam apenas no perfil padrão
+        // quando ele é usado pela primeira vez.
+        val legacy = if (activeProfileId == "default") prefs.getStringSet(PREF_FAVORITES, emptySet()).orEmpty() else emptySet()
+        if (activeProfileId == "default" && legacy.isNotEmpty()) prefs.edit().putStringSet(scopedKey, legacy).apply()
+        return legacy.toMutableSet()
     }
 
     private fun toggleFavorite(entry: CatalogEntry) {
         val current = favorites()
         if (!current.add(entry.key)) current.remove(entry.key)
-        getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).edit().putStringSet(PREF_FAVORITES, current).apply()
+        profilePreferences().edit().putStringSet(profileScopedKey(PREF_FAVORITES), current).apply()
+    }
+
+    private fun watchedKeys(): MutableSet<String> {
+        return profilePreferences().getStringSet(profileScopedKey(PREF_WATCHED_KEYS), emptySet())?.toMutableSet() ?: mutableSetOf()
+    }
+
+    private fun recordWatch(entry: CatalogEntry) {
+        if (entry.key.isBlank()) return
+        val watched = watchedKeys()
+        if (watched.add(entry.key)) profilePreferences().edit().putStringSet(profileScopedKey(PREF_WATCHED_KEYS), watched).apply()
     }
 
     // Atalho: segurar OK em cima de um item na lista favorita/desfavorita na
@@ -3845,7 +5710,9 @@ class MainActivity : Activity() {
     // Chave estavel: CatalogEntry.key (tvg-id + streamUrl), que nao muda entre
     // reimportacoes do mesmo provedor.
     private fun watchCounts(): MutableMap<String, Int> {
-        val raw = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).getString(PREF_CHANNEL_WATCH_COUNTS, null).orEmpty()
+        val prefs = profilePreferences()
+        val scopedKey = profileScopedKey(PREF_CHANNEL_WATCH_COUNTS)
+        val raw = prefs.getString(scopedKey, null) ?: if (activeProfileId == "default") prefs.getString(PREF_CHANNEL_WATCH_COUNTS, null).orEmpty() else ""
         if (raw.isBlank()) return mutableMapOf()
         return runCatching {
             val json = org.json.JSONObject(raw)
@@ -3861,8 +5728,8 @@ class MainActivity : Activity() {
         counts[entry.key] = (counts[entry.key] ?: 0) + 1
         val json = org.json.JSONObject()
         counts.forEach { (key, count) -> json.put(key, count) }
-        getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).edit()
-            .putString(PREF_CHANNEL_WATCH_COUNTS, json.toString())
+        profilePreferences().edit()
+            .putString(profileScopedKey(PREF_CHANNEL_WATCH_COUNTS), json.toString())
             .apply()
     }
 
@@ -3924,6 +5791,12 @@ class MainActivity : Activity() {
         }
     }
 
+    private fun ovalBackground(color: Long): GradientDrawable = GradientDrawable().apply {
+        shape = GradientDrawable.OVAL
+        setColor(Color.argb((color shr 24 and 0xFF).toInt(), (color shr 16 and 0xFF).toInt(), (color shr 8 and 0xFF).toInt(), (color and 0xFF).toInt()))
+        setStroke(dp(1), Color.argb(170, 120, 205, 255))
+    }
+
     private fun rounded(color: Long, radius: Float): GradientDrawable = GradientDrawable().apply {
         setColor(Color.argb((color shr 24 and 0xFF).toInt(), (color shr 16 and 0xFF).toInt(), (color shr 8 and 0xFF).toInt(), (color and 0xFF).toInt()))
         cornerRadius = radius
@@ -3932,6 +5805,40 @@ class MainActivity : Activity() {
     private fun ovalDrawable(color: Long): GradientDrawable = GradientDrawable().apply {
         shape = GradientDrawable.OVAL
         setColor(Color.argb((color shr 24 and 0xFF).toInt(), (color shr 16 and 0xFF).toInt(), (color shr 8 and 0xFF).toInt(), (color and 0xFF).toInt()))
+    }
+
+    private fun orbitalBubbleDrawable(color: Long): GradientDrawable {
+        val source = color.toInt()
+        val red = Color.red(source)
+        val green = Color.green(source)
+        val blue = Color.blue(source)
+        return GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(
+                Color.argb(142, red, green, blue),
+                Color.argb(70, red / 2, green / 2, blue / 2),
+            ),
+        ).apply {
+            shape = GradientDrawable.OVAL
+            setStroke(dp(1), 0xB8FFFFFF.toInt())
+        }
+    }
+
+    private fun orbitalSatelliteDrawable(color: Long): GradientDrawable {
+        val source = color.toInt()
+        val red = Color.red(source)
+        val green = Color.green(source)
+        val blue = Color.blue(source)
+        return GradientDrawable(
+            GradientDrawable.Orientation.TL_BR,
+            intArrayOf(
+                Color.argb(100, red, green, blue),
+                Color.argb(34, red, green, blue),
+            ),
+        ).apply {
+            shape = GradientDrawable.OVAL
+            setStroke(dp(1), 0x72EAF2FF.toInt())
+        }
     }
 
     override fun onActivityResult(requestCode: Int, resultCode: Int, data: Intent?) {
@@ -3957,6 +5864,7 @@ class MainActivity : Activity() {
     override fun onStop() {
         val hadParentalAccess = parentalUnlocked
         parentalUnlocked = false
+        constellationSound?.let { sound -> if (sound.isPlaying) sound.pause(); sound.seekTo(0) }
         if (hadParentalAccess && ::catalogAdapter.isInitialized && !homeMode) {
             selectedCategory = "Todos"
             selectedEntry = null
@@ -3970,6 +5878,8 @@ class MainActivity : Activity() {
 
     override fun onDestroy() {
         mainHandler.removeCallbacksAndMessages(null)
+        constellationSound?.release()
+        constellationSound = null
         stopMiniPlayer()
         repository.shutdown()
         imageLoader.shutdown()
@@ -3980,6 +5890,9 @@ class MainActivity : Activity() {
 
     companion object {
         private const val PREF_FAVORITES = "favorite_catalog_keys"
+        private const val PREF_PROFILES = "future_profiles"
+        private const val PREF_ACTIVE_PROFILE_ID = "future_active_profile_id"
+        private const val PREF_WATCHED_KEYS = "watched_catalog_keys"
         private const val PREF_HIDDEN_GROUPS = "hidden_catalog_groups"
         private const val PREF_CHANNEL_WATCH_COUNTS = "channel_watch_counts"
         private const val FAVORITES_CATEGORY_LABEL = "★ Favoritos"
@@ -3989,6 +5902,9 @@ class MainActivity : Activity() {
         private const val PREF_TEST_API_URL = "test_api_url"
         private const val PREF_LAST_MESSAGE_KEY = "last_remote_message_key"
         private const val PREF_TRAILER_AUDIO = "trailer_audio_enabled"
+        private const val PREF_TRANSITION_STARS = "future_transition_stars"
+        private const val PREF_TRANSITION_SOUND = "future_transition_sound"
+        private const val TRAILER_FOCUS_DELAY_MS = 5_000L
         private const val PREF_AUTOPLAY = "autoplay_enabled"
         const val EXTRA_CATALOG_IMPORT_IN_PROGRESS = "catalog_import_in_progress"
         private const val PREF_KEEP_SCREEN = "keep_screen_on"
