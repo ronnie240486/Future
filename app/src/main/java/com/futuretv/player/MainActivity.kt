@@ -428,7 +428,8 @@ class MainActivity : Activity() {
         homePanel = findViewById(R.id.homePanel)
         homeOrbitRoot = findViewById(R.id.homeOrbitRoot)
         homeSidebarTabs = HomeSidebarTabsView(this).apply {
-            layoutParams = FrameLayout.LayoutParams(dp(190), -1, Gravity.START)
+            val sidebarWidth = (resources.displayMetrics.widthPixels * 0.22f).toInt()
+            layoutParams = FrameLayout.LayoutParams(sidebarWidth, -1, Gravity.START)
             setTabs(listOf(
                 HomeSidebarTabsView.Tab("DORAMAS", R.drawable.home_sidebar_icon_doramas) { openHomeSeriesCategory(HomeSeriesCategory.DORAMAS) },
                 HomeSidebarTabsView.Tab("NOVELAS TURCAS", R.drawable.home_sidebar_icon_turkish_novelas) { openHomeSeriesCategory(HomeSeriesCategory.TURKISH_NOVELAS) },
@@ -2046,6 +2047,7 @@ class MainActivity : Activity() {
             val top: Float,
             val right: Float,
             val bottom: Float,
+            val group: String,
             val action: () -> Unit,
         )
 
@@ -2068,49 +2070,65 @@ class MainActivity : Activity() {
 
         val hotspots = listOf(
             // Canal central.
-            Hotspot(0.34f, 0.24f, 0.68f, 0.76f, openCenter),
+            Hotspot(0.34f, 0.24f, 0.68f, 0.76f, "center", openCenter),
             // Busca e hubs principais.
-            Hotspot(0.88f, 0.00f, 1.00f, 0.16f, { showSearchDialog() }),
-            Hotspot(0.47f, 0.00f, 0.61f, 0.19f, openChannels),
-            Hotspot(0.26f, 0.11f, 0.44f, 0.31f, openSports),
-            Hotspot(0.62f, 0.09f, 0.80f, 0.30f, openMovies),
-            Hotspot(0.74f, 0.30f, 0.94f, 0.57f, openSeries),
-            Hotspot(0.64f, 0.66f, 0.83f, 0.90f, openFavorites),
-            Hotspot(0.40f, 0.69f, 0.61f, 0.94f, openRadios),
-            Hotspot(0.23f, 0.66f, 0.43f, 0.90f, openKids),
+            Hotspot(0.88f, 0.00f, 1.00f, 0.16f, "search", { showSearchDialog() }),
+            Hotspot(0.47f, 0.00f, 0.61f, 0.19f, "channels", openChannels),
+            Hotspot(0.26f, 0.11f, 0.44f, 0.31f, "sports", openSports),
+            Hotspot(0.62f, 0.09f, 0.80f, 0.30f, "movies", openMovies),
+            Hotspot(0.74f, 0.30f, 0.94f, 0.57f, "series", openSeries),
+            Hotspot(0.64f, 0.66f, 0.83f, 0.90f, "favorites", openFavorites),
+            Hotspot(0.40f, 0.69f, 0.61f, 0.94f, "radios", openRadios),
+            Hotspot(0.23f, 0.66f, 0.43f, 0.90f, "kids", openKids),
             // Satélites Esporte.
-            Hotspot(0.25f, 0.10f, 0.30f, 0.18f, openSports),
-            Hotspot(0.34f, 0.06f, 0.40f, 0.14f, openSports),
-            Hotspot(0.20f, 0.20f, 0.27f, 0.29f, openSports),
-            Hotspot(0.30f, 0.21f, 0.37f, 0.30f, openSports),
+            Hotspot(0.25f, 0.10f, 0.30f, 0.18f, "sports", openSports),
+            Hotspot(0.34f, 0.06f, 0.40f, 0.14f, "sports", openSports),
+            Hotspot(0.20f, 0.20f, 0.27f, 0.29f, "sports", openSports),
+            Hotspot(0.30f, 0.21f, 0.37f, 0.30f, "sports", openSports),
             // Satélites Cinema.
-            Hotspot(0.70f, 0.04f, 0.77f, 0.13f, openMovies),
-            Hotspot(0.76f, 0.10f, 0.83f, 0.20f, openMovies),
-            Hotspot(0.70f, 0.18f, 0.77f, 0.28f, openMovies),
-            Hotspot(0.80f, 0.19f, 0.87f, 0.29f, openMovies),
+            Hotspot(0.70f, 0.04f, 0.77f, 0.13f, "movies", openMovies),
+            Hotspot(0.76f, 0.10f, 0.83f, 0.20f, "movies", openMovies),
+            Hotspot(0.70f, 0.18f, 0.77f, 0.28f, "movies", openMovies),
+            Hotspot(0.80f, 0.19f, 0.87f, 0.29f, "movies", openMovies),
             // Satélites Séries.
-            Hotspot(0.80f, 0.32f, 0.87f, 0.41f, openSeries),
-            Hotspot(0.87f, 0.34f, 0.94f, 0.44f, openSeries),
-            Hotspot(0.84f, 0.46f, 0.91f, 0.56f, openSeries),
-            Hotspot(0.76f, 0.47f, 0.83f, 0.57f, openSeries),
+            Hotspot(0.80f, 0.32f, 0.87f, 0.41f, "series", openSeries),
+            Hotspot(0.87f, 0.34f, 0.94f, 0.44f, "series", openSeries),
+            Hotspot(0.84f, 0.46f, 0.91f, 0.56f, "series", openSeries),
+            Hotspot(0.76f, 0.47f, 0.83f, 0.57f, "series", openSeries),
             // Satélites Favoritos.
-            Hotspot(0.73f, 0.64f, 0.80f, 0.73f, openFavorites),
-            Hotspot(0.80f, 0.70f, 0.87f, 0.80f, openFavorites),
-            Hotspot(0.69f, 0.78f, 0.76f, 0.88f, openFavorites),
-            Hotspot(0.78f, 0.82f, 0.85f, 0.92f, openFavorites),
+            Hotspot(0.73f, 0.64f, 0.80f, 0.73f, "favorites", openFavorites),
+            Hotspot(0.80f, 0.70f, 0.87f, 0.80f, "favorites", openFavorites),
+            Hotspot(0.69f, 0.78f, 0.76f, 0.88f, "favorites", openFavorites),
+            Hotspot(0.78f, 0.82f, 0.85f, 0.92f, "favorites", openFavorites),
             // Satélites Rádios.
-            Hotspot(0.43f, 0.76f, 0.50f, 0.85f, openRadios),
-            Hotspot(0.51f, 0.77f, 0.58f, 0.87f, openRadios),
-            Hotspot(0.45f, 0.88f, 0.52f, 0.98f, openRadios),
-            Hotspot(0.56f, 0.86f, 0.63f, 0.95f, openRadios),
+            Hotspot(0.43f, 0.76f, 0.50f, 0.85f, "radios", openRadios),
+            Hotspot(0.51f, 0.77f, 0.58f, 0.87f, "radios", openRadios),
+            Hotspot(0.45f, 0.88f, 0.52f, 0.98f, "radios", openRadios),
+            Hotspot(0.56f, 0.86f, 0.63f, 0.95f, "radios", openRadios),
             // Satélites Kids.
-            Hotspot(0.24f, 0.65f, 0.31f, 0.75f, openKids),
-            Hotspot(0.20f, 0.76f, 0.27f, 0.86f, openKids),
-            Hotspot(0.29f, 0.80f, 0.36f, 0.90f, openKids),
-            Hotspot(0.33f, 0.70f, 0.40f, 0.80f, openKids),
+            Hotspot(0.24f, 0.65f, 0.31f, 0.75f, "kids", openKids),
+            Hotspot(0.20f, 0.76f, 0.27f, 0.86f, "kids", openKids),
+            Hotspot(0.29f, 0.80f, 0.36f, 0.90f, "kids", openKids),
+            Hotspot(0.33f, 0.70f, 0.40f, 0.80f, "kids", openKids),
         )
 
-        exactHomeHotspots = hotspots.map { hotspot ->
+        // Cada categoria (principal + satélites) vira UMA região focável só,
+        // usando o retângulo que envolve tudo daquele grupo -- antes eram
+        // varias views separadas fazendo a mesma coisa, e o controle remoto
+        // tinha que passar por cada uma individualmente pra sair da
+        // categoria, em vez de ir direto pra próxima.
+        val mergedHotspots = hotspots.groupBy { it.group }.map { (_, group) ->
+            Hotspot(
+                left = group.minOf { it.left },
+                top = group.minOf { it.top },
+                right = group.maxOf { it.right },
+                bottom = group.maxOf { it.bottom },
+                group = group.first().group,
+                action = group.first().action,
+            )
+        }
+
+        exactHomeHotspots = mergedHotspots.map { hotspot ->
             View(this).apply {
                 layoutParams = FrameLayout.LayoutParams(
                     ((hotspot.right - hotspot.left) * width).toInt().coerceAtLeast(24),
