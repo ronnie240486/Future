@@ -9,7 +9,6 @@
 .cxx
 app/build
 artifacts
-assets
 
 # Build and preview deliveries are kept locally, not versioned with the source.
 /*.apk
