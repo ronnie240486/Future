@@ -533,14 +533,14 @@
                 </LinearLayout>
             </LinearLayout>
         </ScrollView>
+    </LinearLayout>
 
     <FrameLayout
         android:id="@+id/homePanel"
-        android:layout_width="0dp"
+        android:layout_width="match_parent"
         android:layout_height="match_parent"
         android:layout_marginStart="140dp"
-        android:layout_weight="0.90"
-        android:background="@drawable/orbit_background"
+        android:background="#07102B"
         android:visibility="gone">
 
         <ImageView
@@ -661,5 +661,4 @@
             android:layout_width="match_parent"
             android:layout_height="match_parent" />
     </FrameLayout>
-    </LinearLayout>
 </FrameLayout>

@@ -3,18 +3,18 @@ package com.futuretv.player
 import android.content.Context
 import android.graphics.Canvas
 import android.graphics.Color
-import android.graphics.LinearGradient
 import android.graphics.Paint
 import android.graphics.Path
 import android.graphics.PointF
 import android.graphics.RectF
-import android.graphics.Shader
 import android.util.AttributeSet
 import android.view.View
 import kotlin.math.min
-import kotlin.math.sqrt
 
-/** Camada decorativa da Home orbital, com anéis, links curvos e brilho em camadas. */
+/**
+ * Camada decorativa da home orbital. Desenha anéis suaves, conexões curvas
+ * entre o conteúdo central e as categorias, e pequenos links para satélites.
+ */
 class OrbitLinesView(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
     private var center: PointF? = null
     private var points: List<PointF> = emptyList()
@@ -41,17 +41,21 @@ class OrbitLinesView(context: Context, attrs: AttributeSet? = null) : View(conte
         strokeWidth = 0.9f
     }
     private val dotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(230, 190, 240, 255)
+        color = Color.argb(220, 164, 210, 255)
         style = Paint.Style.FILL
     }
-    private val dotGlowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-        color = Color.argb(110, 120, 210, 255)
+    private val glowPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(72, 95, 168, 255)
         style = Paint.Style.FILL
     }
-    private val glowLayers = listOf(14f to 18, 9f to 35, 5f to 60, 2.5f to 130)
+    private val satelliteDotPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
+        color = Color.argb(170, 220, 226, 255)
+        style = Paint.Style.FILL
+    }
 
     init {
         setLayerType(LAYER_TYPE_SOFTWARE, null)
+        glowPaint.setShadowLayer(12f, 0f, 0f, Color.argb(150, 82, 151, 255))
     }
 
     fun setPoints(
@@ -81,7 +85,7 @@ class OrbitLinesView(context: Context, attrs: AttributeSet? = null) : View(conte
         canvas.drawCircle(c.x, c.y, radius * 0.64f, ringPaint)
 
         points.forEachIndexed { index, point ->
-            drawCurvedGlowLink(canvas, c, point, if (index % 3 == 0) accentLinePaint else linePaint, 30f * if (index % 2 == 0) 1f else -1f)
+            drawCurvedLink(canvas, c, point, if (index % 3 == 0) accentLinePaint else linePaint, 30f * if (index % 2 == 0) 1f else -1f)
             drawLinkDots(canvas, c, point, false)
         }
 
@@ -93,49 +97,14 @@ class OrbitLinesView(context: Context, attrs: AttributeSet? = null) : View(conte
             val dy = satellite.y - source.y
             val x = source.x + dx * 0.54f
             val y = source.y + dy * 0.54f
-            canvas.drawCircle(x, y, 6f, dotGlowPaint)
-            canvas.drawCircle(x, y, 1.8f, dotPaint)
+            canvas.drawCircle(x, y, 2.6f, satelliteDotPaint)
         }
-    }
-
-    private fun drawCurvedGlowLink(canvas: Canvas, source: PointF, target: PointF, paint: Paint, bend: Float) {
-        val dx = target.x - source.x
-        val dy = target.y - source.y
-        val length = sqrt((dx * dx + dy * dy).toDouble()).toFloat().coerceAtLeast(1f)
-        val normalX = -dy / length
-        val normalY = dx / length
-        val controlX = source.x + dx * 0.5f + normalX * bend
-        val controlY = source.y + dy * 0.5f + normalY * bend
-        val path = Path().apply {
-            moveTo(source.x, source.y)
-            quadTo(controlX, controlY, target.x, target.y)
-        }
-        val shader = LinearGradient(
-            source.x,
-            source.y,
-            target.x,
-            target.y,
-            Color.argb(160, 123, 97, 255),
-            Color.argb(160, 43, 220, 255),
-            Shader.TileMode.CLAMP,
-        )
-        glowLayers.forEach { (strokeWidth, alpha) ->
-            val glow = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-                this.shader = shader
-                this.alpha = alpha
-                this.strokeWidth = strokeWidth
-                style = Paint.Style.STROKE
-                strokeCap = Paint.Cap.ROUND
-            }
-            canvas.drawPath(path, glow)
-        }
-        canvas.drawPath(path, paint)
     }
 
     private fun drawCurvedLink(canvas: Canvas, source: PointF, target: PointF, paint: Paint, bend: Float) {
         val dx = target.x - source.x
         val dy = target.y - source.y
-        val length = sqrt((dx * dx + dy * dy).toDouble()).toFloat().coerceAtLeast(1f)
+        val length = kotlin.math.sqrt((dx * dx + dy * dy).toDouble()).toFloat().coerceAtLeast(1f)
         val normalX = -dy / length
         val normalY = dx / length
         val controlX = source.x + dx * 0.5f + normalX * bend
@@ -152,7 +121,7 @@ class OrbitLinesView(context: Context, attrs: AttributeSet? = null) : View(conte
         listOf(0.28f, 0.52f, 0.76f).forEach { t ->
             val x = source.x + dx * t
             val y = source.y + dy * t
-            canvas.drawCircle(x, y, if (satellite) 6f else 5.5f, dotGlowPaint)
+            canvas.drawCircle(x, y, if (satellite) 2.6f else 5.5f, glowPaint)
             canvas.drawCircle(x, y, if (satellite) 1.2f else 1.8f, dotPaint)
         }
     }
