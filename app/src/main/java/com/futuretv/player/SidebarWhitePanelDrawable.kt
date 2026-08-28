@@ -52,7 +52,7 @@ class SidebarWhitePanelDrawable : Drawable() {
 
         panelPath.reset()
         panelPath.moveTo(0f, 0f)
-        panelPath.lineTo(width * 0.78f, 0f)
+        panelPath.lineTo(width * 0.75f, 0f)
         panelPath.cubicTo(
             width * 0.93f,
             height * 0.06f,
@@ -74,7 +74,7 @@ class SidebarWhitePanelDrawable : Drawable() {
             height * 0.81f,
             width * 0.93f,
             height * 0.94f,
-            width * 0.78f,
+            width * 0.75f,
             height,
         )
         panelPath.lineTo(0f, height)
@@ -84,7 +84,7 @@ class SidebarWhitePanelDrawable : Drawable() {
         canvas.drawPath(panelPath, fillPaint)
 
         edgePath.reset()
-        edgePath.moveTo(width * 0.78f, 0f)
+        edgePath.moveTo(width * 0.75f, 0f)
         edgePath.cubicTo(
             width * 0.93f,
             height * 0.06f,
@@ -106,7 +106,7 @@ class SidebarWhitePanelDrawable : Drawable() {
             height * 0.81f,
             width * 0.93f,
             height * 0.94f,
-            width * 0.78f,
+            width * 0.75f,
             height,
         )
         canvas.drawPath(edgePath, edgePaint)

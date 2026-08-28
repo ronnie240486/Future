@@ -6,6 +6,7 @@ import android.graphics.drawable.GradientDrawable
 import android.view.Gravity
 import android.view.View
 import android.widget.FrameLayout
+import android.widget.ImageView
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -77,8 +78,13 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
             }
             if (index > 0) row.nextFocusUpId = rows[index - 1].id
             if (rows.isNotEmpty()) rows[index - 1].nextFocusDownId = row.id
-            row.addView(HomeSidebarIconView(context, tab.title).apply {
-                layoutParams = LinearLayout.LayoutParams(dp(34), LayoutParams.MATCH_PARENT)
+            row.addView(ImageView(context).apply {
+                setImageResource(tab.iconRes)
+                scaleType = ImageView.ScaleType.FIT_CENTER
+                layoutParams = LinearLayout.LayoutParams(dp(34), LinearLayout.LayoutParams.MATCH_PARENT).apply {
+                    topMargin = dp(4)
+                    bottomMargin = dp(4)
+                }
             })
             row.addView(TextView(context).apply {
                 text = tab.title
