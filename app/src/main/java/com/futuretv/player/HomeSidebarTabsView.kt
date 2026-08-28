@@ -83,7 +83,7 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
             row.addView(TextView(context).apply {
                 text = tab.title
                 setTextColor(Color.rgb(248, 250, 255))
-                textSize = 7f
+                textSize = 9f
                 textScaleX = 0.78f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 gravity = Gravity.CENTER_VERTICAL
@@ -116,10 +116,14 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
         // A posição corresponde à referência: cabeçalho no topo e as cinco
         // cápsulas começam abaixo dele, dentro do painel branco.
         val top = (height * 0.14f).toInt()
-        val rowHeight = (height * 0.11f).toInt()
+        val rowHeight = (height * 0.055f).toInt()
         val gap = (height * 0.02f).toInt()
         val leftInset = (width * 0.055f).toInt()
-        val rightInset = (width * 0.055f).toInt()
+        // O ponto mais estreito do painel branco (SidebarWhitePanelDrawable)
+        // fica em width*0.70 (a "cintura" da forma ondulada) -- a margem
+        // direita precisa ser maior que isso pra capsula nao vazar pra fora
+        // do branco. Antes era so 5.5%, bem menor que os ~30% necessarios.
+        val rightInset = (width * 0.32f).toInt()
         content.setPadding(leftInset, top, rightInset, 0)
         rows.forEach { row ->
             (row.layoutParams as? LinearLayout.LayoutParams)?.let { params ->
