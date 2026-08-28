@@ -47,7 +47,7 @@ class HomeSidebarIconView(
         // disponivel, e como a linha nao recorta os filhos (clipChildren=false),
         // qualquer parte que passe um pouco do limite aparece "vazando" pra
         // fora da capsula.
-        canvas.scale(0.55f, 0.55f, cx, cy)
+        canvas.scale(0.35f, 0.35f, cx, cy)
         when {
             title.equals("DORAMAS", ignoreCase = true) -> drawMasks(canvas, cx, cy)
             title.contains("TURCAS", ignoreCase = true) -> drawCrescent(canvas, cx, cy)

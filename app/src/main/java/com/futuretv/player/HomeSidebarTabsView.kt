@@ -56,7 +56,7 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
                 clipChildren = false
                 clipToPadding = false
                 setPadding(dp(8), 0, dp(5), 0)
-                layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(34)).apply {
+                layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(20)).apply {
                     bottomMargin = dp(5)
                 }
                 contentDescription = tab.title
@@ -78,12 +78,12 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
             if (index > 0) row.nextFocusUpId = rows[index - 1].id
             if (rows.isNotEmpty()) rows[index - 1].nextFocusDownId = row.id
             row.addView(HomeSidebarIconView(context, tab.title).apply {
-                layoutParams = LinearLayout.LayoutParams(dp(30), LayoutParams.MATCH_PARENT)
+                layoutParams = LinearLayout.LayoutParams(dp(18), LayoutParams.MATCH_PARENT)
             })
             row.addView(TextView(context).apply {
                 text = tab.title
                 setTextColor(Color.rgb(248, 250, 255))
-                textSize = 8f
+                textSize = 7f
                 textScaleX = 0.78f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 gravity = Gravity.CENTER_VERTICAL
