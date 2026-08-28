@@ -56,7 +56,7 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
                 isClickable = true
                 clipChildren = false
                 clipToPadding = false
-                setPadding(dp(8), 0, dp(5), 0)
+                setPadding(dp(8), 0, dp(16), 0)
                 layoutParams = LinearLayout.LayoutParams(LayoutParams.MATCH_PARENT, dp(20)).apply {
                     bottomMargin = dp(5)
                 }
@@ -180,7 +180,7 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
     private fun tabBackground(selected: Boolean, hasFocus: Boolean): GradientDrawable = GradientDrawable().apply {
         // Cápsula nativa sobre o painel branco; não há hotspot invisível.
         setColor(if (hasFocus) Color.rgb(38, 70, 122) else Color.rgb(9, 25, 60))
-        cornerRadius = dp(22).toFloat()
+        cornerRadius = dp(26).toFloat()
         setStroke(if (hasFocus) dp(2) else dp(1), Color.WHITE)
     }
 
