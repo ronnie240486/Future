@@ -78,12 +78,12 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
             if (index > 0) row.nextFocusUpId = rows[index - 1].id
             if (rows.isNotEmpty()) rows[index - 1].nextFocusDownId = row.id
             row.addView(HomeSidebarIconView(context, tab.title).apply {
-                layoutParams = LinearLayout.LayoutParams(dp(18), LayoutParams.MATCH_PARENT)
+                layoutParams = LinearLayout.LayoutParams(dp(34), LayoutParams.MATCH_PARENT)
             })
             row.addView(TextView(context).apply {
                 text = tab.title
                 setTextColor(Color.rgb(248, 250, 255))
-                textSize = 9f
+                textSize = 13f
                 textScaleX = 0.78f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 gravity = Gravity.CENTER_VERTICAL
@@ -99,10 +99,10 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
             row.addView(TextView(context).apply {
                 text = "›"
                 setTextColor(Color.WHITE)
-                textSize = 22f
+                textSize = 28f
                 gravity = Gravity.CENTER
                 includeFontPadding = false
-                layoutParams = LinearLayout.LayoutParams(dp(20), LayoutParams.MATCH_PARENT)
+                layoutParams = LinearLayout.LayoutParams(dp(26), LayoutParams.MATCH_PARENT)
             })
             rows += row
             content.addView(row)
@@ -116,8 +116,8 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
         // A posição corresponde à referência: cabeçalho no topo e as cinco
         // cápsulas começam abaixo dele, dentro do painel branco.
         val top = (height * 0.14f).toInt()
-        val rowHeight = (height * 0.055f).toInt()
-        val gap = (height * 0.02f).toInt()
+        val rowHeight = (height * 0.14f).toInt()
+        val gap = (height * 0.025f).toInt()
         val leftInset = (width * 0.055f).toInt()
         // O ponto mais estreito do painel branco (SidebarWhitePanelDrawable)
         // fica em width*0.70 (a "cintura" da forma ondulada) -- a margem
