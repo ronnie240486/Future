@@ -210,6 +210,12 @@ class MainActivity : Activity() {
     private val categoryCache = mutableMapOf<MediaKind, List<String>>()
     private var selectedEntry: CatalogEntry? = null
     private val enrichedMetadata = mutableMapOf<String, CatalogMetadata>()
+    // Capa "oficial" (TMDB) por série/filme, pra usar em TODOS os episódios
+    // do mesmo grupo na lista/grade -- sem isso, cada episódio mostrava sua
+    // própria imagem de fundo do M3U (geralmente uma captura de tela daquele
+    // episódio especificamente, não a capa do show).
+    private val seriesPosterCache = mutableMapOf<String, String>()
+    private val seriesPosterFetching = mutableSetOf<String>()
     private var selectedCategory = "Todos"
     private var query = ""
     private var favoritesOnly = false
@@ -1474,6 +1480,8 @@ class MainActivity : Activity() {
             },
             onClicked = { handleEntryClick(it) },
             onLongClicked = { quickToggleFavorite(it) },
+            posterResolver = ::resolveCachedPoster,
+            onNeedsPoster = ::requestPosterIfNeeded,
         )
         channelList.layoutManager = androidx.recyclerview.widget.GridLayoutManager(this, 2)
         channelList.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
@@ -3844,6 +3852,30 @@ class MainActivity : Activity() {
                     val parts = listOf(entry.groupTitle, entry.year, entry.quality, kindLabel(entry.kind), entry.runtime, "⭐ %.1f".format(rating.score))
                         .filter { it.isNotBlank() }
                     detailTags.text = parts.joinToString("   •   ")
+                }
+            }
+        }
+    }
+
+    // Chave de cache: por seriesGroup pra séries (assim TODOS os episódios
+    // do mesmo show compartilham a mesma capa buscada uma única vez), por
+    // key individual pra filmes.
+    private fun posterCacheKey(entry: CatalogEntry): String =
+        if (entry.kind == MediaKind.SERIES) entry.seriesGroup.ifBlank { entry.groupTitle }.lowercase(Locale.ROOT) else entry.key
+
+    private fun resolveCachedPoster(entry: CatalogEntry): String? = seriesPosterCache[posterCacheKey(entry)]
+
+    private fun requestPosterIfNeeded(entry: CatalogEntry) {
+        val cacheKey = posterCacheKey(entry)
+        if (cacheKey in seriesPosterCache || cacheKey in seriesPosterFetching) return
+        seriesPosterFetching += cacheKey
+        repository.enrichMetadata(entry) { metadata ->
+            runOnUiThread {
+                seriesPosterFetching -= cacheKey
+                val poster = metadata?.backdrop?.takeIf { it.isNotBlank() }
+                if (poster != null) {
+                    seriesPosterCache[cacheKey] = poster
+                    if (::catalogAdapter.isInitialized) catalogAdapter.notifyDataSetChanged()
                 }
             }
         }

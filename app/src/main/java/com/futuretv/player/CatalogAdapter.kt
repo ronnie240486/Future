@@ -18,6 +18,13 @@ class CatalogAdapter(
     private val onSelected: (CatalogEntry) -> Unit,
     private val onClicked: (CatalogEntry) -> Unit,
     private val onLongClicked: (CatalogEntry) -> Unit,
+    // Retorna a capa "oficial" ja conhecida pra série/filme (buscada uma
+    // vez, na TMDB, e reaproveitada em todos os episódios do mesmo
+    // seriesGroup) -- null se ainda não foi buscada.
+    private val posterResolver: (CatalogEntry) -> String? = { null },
+    // Chamado quando um item visível ainda não tem capa oficial em cache,
+    // pra disparar a busca em segundo plano (uma vez só por série).
+    private val onNeedsPoster: (CatalogEntry) -> Unit = {},
 ) : RecyclerView.Adapter<CatalogAdapter.Holder>() {
     private var items: List<CatalogEntry> = emptyList()
     private var selectedKey: String? = null
@@ -159,7 +166,13 @@ class CatalogAdapter(
             }
         }
         holder.row.tag = item.key
-        imageLoader.load(item.backdropUrl.ifBlank { item.logoUrl }, holder.logo, fallbackLogo(item))
+        val officialPoster = if (item.kind == MediaKind.MOVIE || item.kind == MediaKind.SERIES) posterResolver(item) else null
+        if (officialPoster != null) {
+            imageLoader.load(officialPoster, holder.logo, fallbackLogo(item))
+        } else {
+            imageLoader.load(item.backdropUrl.ifBlank { item.logoUrl }, holder.logo, fallbackLogo(item))
+            if (item.kind == MediaKind.MOVIE || item.kind == MediaKind.SERIES) onNeedsPoster(item)
+        }
         fun paint(focused: Boolean) {
             val isSelected = item.key == selectedKey
             holder.row.background = glassCard(focused, isSelected, holder.row.context.resources.displayMetrics.density)
