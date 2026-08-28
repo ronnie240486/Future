@@ -159,7 +159,7 @@ class CatalogAdapter(
             }
         }
         holder.row.tag = item.key
-        imageLoader.load(item.logoUrl.ifBlank { item.backdropUrl }, holder.logo, fallbackLogo(item))
+        imageLoader.load(item.backdropUrl.ifBlank { item.logoUrl }, holder.logo, fallbackLogo(item))
         fun paint(focused: Boolean) {
             val isSelected = item.key == selectedKey
             holder.row.background = glassCard(focused, isSelected, holder.row.context.resources.displayMetrics.density)
