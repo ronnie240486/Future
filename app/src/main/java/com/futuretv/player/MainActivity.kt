@@ -371,6 +371,9 @@ class MainActivity : Activity() {
         brandSubtitle = findViewById(R.id.brandSubtitle)
         channelList = findViewById(R.id.channelList)
         videoPreview = findViewById(R.id.videoPreview)
+        videoPreview.layoutParams = videoPreview.layoutParams.apply {
+            height = (resources.displayMetrics.heightPixels * 0.42f).toInt()
+        }
         previewScroll = findViewById(R.id.previewScroll)
         categoryList = findViewById(R.id.categoryList)
         sortRow = findViewById(R.id.sortRow)
@@ -457,6 +460,16 @@ class MainActivity : Activity() {
         homeUserHeader.setOnFocusChangeListener { view, hasFocus ->
             view.alpha = if (hasFocus) 1f else 0.94f
             view.background = rounded(if (hasFocus) 0x553D79AA else 0x00000000, 18f)
+        }
+        homeUserHeader.setOnKeyListener { _, keyCode, event ->
+            if (event.action == KeyEvent.ACTION_DOWN &&
+                (keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyCode == KeyEvent.KEYCODE_ENTER || keyCode == KeyEvent.KEYCODE_BUTTON_A)
+            ) {
+                showProfileDialog()
+                true
+            } else {
+                false
+            }
         }
         loadActiveProfile()
         updateProfileHeader()
