@@ -3271,6 +3271,13 @@ class MainActivity : Activity() {
     }
 
     private fun scheduleTrailerPreview(entry: CatalogEntry) {
+        // Se já é o mesmo item que estava agendado (e ainda dentro da janela
+        // de espera, ou já revelado), não reinicia o cronômetro do zero --
+        // isso é o que fazia o trailer nunca aparecer: o foco "piscava" de
+        // novo no mesmo item com frequência (comum enquanto a importação em
+        // segundo plano ainda está rodando e reconstrói linhas da lista),
+        // cancelando o cronômetro de 5s repetidamente antes dele completar.
+        if (trailerFocusEntryKey == entry.key && (miniTrailerView == null || miniPlayerEntryKey == entry.key)) return
         trailerFocusToken++
         val token = trailerFocusToken
         trailerFocusEntryKey = entry.key
