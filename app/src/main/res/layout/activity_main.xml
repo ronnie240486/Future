@@ -21,7 +21,8 @@
 
         <LinearLayout
             android:id="@+id/sideNavigation"
-            android:layout_width="140dp"
+            android:layout_width="0dp"
+            android:layout_weight="0.10"
             android:layout_height="match_parent"
             android:background="#D90D1732"
             android:elevation="12dp"
