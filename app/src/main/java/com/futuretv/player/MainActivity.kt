@@ -1499,6 +1499,8 @@ class MainActivity : Activity() {
             scrollBarStyle = View.SCROLLBARS_INSIDE_OVERLAY
         }
         navItems.layoutParams = FrameLayout.LayoutParams(-1, -1)
+        navItems.clipChildren = true
+        navItems.clipToPadding = true
         // Ordem e conjunto visíveis seguem a referência aprovada: sem a
         // navegação antiga duplicada de Início/Voz no shell interno.
         val items = listOf(
