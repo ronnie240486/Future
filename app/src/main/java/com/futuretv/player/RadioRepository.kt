@@ -51,7 +51,11 @@ class RadioRepository(private val context: Context) {
             }
             .distinctBy { it.streamUrl.lowercase(Locale.ROOT) }
             .sortedWith(compareBy({ order[it.category] ?: Int.MAX_VALUE }, { it.name.lowercase(Locale.ROOT) }))
-        cachedStations = stations
+        // Só guarda em cache se realmente achou alguma estação -- um resultado
+        // vazio (ex.: chamado cedo demais, com o app ocupado pela importação
+        // pesada, ou uma falha passageira de leitura) não deve ficar preso
+        // pra sempre; assim uma tentativa seguinte pode dar certo.
+        if (stations.isNotEmpty()) cachedStations = stations
         return stations
     }
 
