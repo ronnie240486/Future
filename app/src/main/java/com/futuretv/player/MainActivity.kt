@@ -658,11 +658,13 @@ class MainActivity : Activity() {
         if (isWithin(focused, channelList)) {
             val row = catalogRowForFocus(focused)
             val position = row?.let { channelList.getChildAdapterPosition(it) } ?: RecyclerView.NO_POSITION
+            val spanCount = (channelList.layoutManager as? androidx.recyclerview.widget.GridLayoutManager)?.spanCount ?: 1
+            val column = if (position >= 0) position % spanCount else 0
             return when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT -> focusFirstCategory() || focusNavigationForCurrentSection()
-                KeyEvent.KEYCODE_DPAD_RIGHT -> focusPreview() || focusFirstAction()
-                KeyEvent.KEYCODE_DPAD_UP -> if (position <= 0) focusFirstSortButton() || focusFirstCategory() || searchHint.requestFocus() else moveCatalogFocus(-1)
-                KeyEvent.KEYCODE_DPAD_DOWN -> moveCatalogFocus(1)
+                KeyEvent.KEYCODE_DPAD_LEFT -> if (column == 0) (focusFirstCategory() || focusNavigationForCurrentSection()) else moveCatalogFocus(-1)
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (column == spanCount - 1) (focusPreview() || focusFirstAction()) else moveCatalogFocus(1)
+                KeyEvent.KEYCODE_DPAD_UP -> if (position < spanCount) focusFirstSortButton() || focusFirstCategory() || searchHint.requestFocus() else moveCatalogFocus(-spanCount)
+                KeyEvent.KEYCODE_DPAD_DOWN -> moveCatalogFocus(spanCount)
                 else -> false
             }
         }
@@ -3875,7 +3877,7 @@ class MainActivity : Activity() {
                 val poster = metadata?.backdrop?.takeIf { it.isNotBlank() }
                 if (poster != null) {
                     seriesPosterCache[cacheKey] = poster
-                    if (::catalogAdapter.isInitialized) catalogAdapter.notifyDataSetChanged()
+                    if (::catalogAdapter.isInitialized) catalogAdapter.refreshItemsMatching { posterCacheKey(it) == cacheKey }
                 }
             }
         }

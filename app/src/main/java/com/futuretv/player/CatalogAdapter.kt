@@ -48,6 +48,20 @@ class CatalogAdapter(
 
     fun positionOf(key: String?): Int = if (key == null) -1 else items.indexOfFirst { it.key == key }
 
+    // Atualiza só as linhas visíveis que passam no filtro (ex.: mesma série),
+    // em vez de notifyDataSetChanged() -- que força o RecyclerView a tratar
+    // a lista inteira como potencialmente mudada, causando um re-layout
+    // disruptivo bem no meio da navegação com o D-pad (o que a barra de
+    // categorias/colunas "empilhando estranho" que o usuário via era isso).
+    fun refreshItemsMatching(predicate: (CatalogEntry) -> Boolean) {
+        val recyclerView = attachedRecyclerView ?: return
+        items.forEachIndexed { index, entry ->
+            if (predicate(entry) && recyclerView.findViewHolderForAdapterPosition(index) != null) {
+                notifyItemChanged(index)
+            }
+        }
+    }
+
     fun setSelectedKey(key: String?) {
         if (key == selectedKey) return
         val oldPosition = positionOf(selectedKey)
