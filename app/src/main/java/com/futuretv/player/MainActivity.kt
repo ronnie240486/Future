@@ -3233,6 +3233,9 @@ class MainActivity : Activity() {
         val sameEntry = miniPlayerEntryKey == entry.key
         if (isSeriesRootEntry(entry)) {
             selectEntry(entry, true)
+            // Clicar direto na série já abre as temporadas -- sem isso,
+            // era preciso descer até o botão "TEMPORADAS" separadamente.
+            showSeriesSeasonsDialog(entry)
             return
         }
         if (entry.kind == MediaKind.LIVE && sameEntry && previewMode == PreviewMode.CONTENT) {
@@ -3243,9 +3246,11 @@ class MainActivity : Activity() {
         if (entry.kind == MediaKind.LIVE) {
             recordChannelWatch(entry)
             startMiniPlayer(entry)
+        } else {
+            // Filme ou episódio de série: abre direto em vez de só
+            // selecionar e exigir um clique extra no botão embaixo.
+            openEntry(entry)
         }
-        // Filmes e séries permanecem sem mini player: o card apenas seleciona
-        // o conteúdo e o botão principal abre a reprodução em tela cheia.
     }
 
     private fun startContentPreview(entry: CatalogEntry) {
