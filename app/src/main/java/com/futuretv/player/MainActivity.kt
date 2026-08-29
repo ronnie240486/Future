@@ -379,7 +379,7 @@ class MainActivity : Activity() {
         videoPreview = findViewById(R.id.videoPreview)
         fun applyVideoPreviewHeight() {
             videoPreview.layoutParams = videoPreview.layoutParams.apply {
-                height = (resources.displayMetrics.heightPixels * 0.72f).toInt()
+                height = (resources.displayMetrics.heightPixels * 0.54f).toInt()
             }
             videoPreview.requestLayout()
         }
