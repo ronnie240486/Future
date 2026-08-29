@@ -827,14 +827,18 @@ class MainActivity : Activity() {
     }
 
     private fun moveExactHomeHotspot(focused: View, keyCode: Int): Boolean {
+        val sourceAnchor = focused.tag as? PointF
         val source = focused.layoutParams as? FrameLayout.LayoutParams ?: return false
-        val sourceX = source.leftMargin + focused.width / 2f
-        val sourceY = source.topMargin + focused.height / 2f
+        val sourceX = sourceAnchor?.x ?: (source.leftMargin + focused.width / 2f)
+        val sourceY = sourceAnchor?.y ?: (source.topMargin + focused.height / 2f)
         val candidates = exactHomeHotspots.filter { it !== focused && it.isShown && it.isEnabled }
         val target = candidates.mapNotNull { candidate ->
+            val candidateAnchor = candidate.tag as? PointF
             val params = candidate.layoutParams as? FrameLayout.LayoutParams ?: return@mapNotNull null
-            val dx = params.leftMargin + candidate.width / 2f - sourceX
-            val dy = params.topMargin + candidate.height / 2f - sourceY
+            val candidateX = candidateAnchor?.x ?: (params.leftMargin + candidate.width / 2f)
+            val candidateY = candidateAnchor?.y ?: (params.topMargin + candidate.height / 2f)
+            val dx = candidateX - sourceX
+            val dy = candidateY - sourceY
             val primary: Float
             val secondary: Float
             when (keyCode) {
@@ -2077,6 +2081,14 @@ class MainActivity : Activity() {
             val bottom: Float,
             val group: String,
             val action: () -> Unit,
+            // Ponto usado pro CALCULO de direcao (esquerda/direita/cima/baixo).
+            // Por padrao e o centro do proprio retangulo, mas ao mesclar bolha
+            // principal + satelites numa unica area de foco, o centro do
+            // retangulo mesclado fica puxado pros satelites -- entao usamos o
+            // centro da bolha PRINCIPAL aqui, mantendo a area de foco grande
+            // mas o calculo de direcao fiel a posicao visual real da bolha.
+            val anchorX: Float = (left + right) / 2f,
+            val anchorY: Float = (top + bottom) / 2f,
         )
 
         val openLive = { switchSection(MediaKind.LIVE) }
@@ -2146,13 +2158,16 @@ class MainActivity : Activity() {
         // tinha que passar por cada uma individualmente pra sair da
         // categoria, em vez de ir direto pra próxima.
         val mergedHotspots = hotspots.groupBy { it.group }.map { (_, group) ->
+            val main = group.first()
             Hotspot(
                 left = group.minOf { it.left },
                 top = group.minOf { it.top },
                 right = group.maxOf { it.right },
                 bottom = group.maxOf { it.bottom },
-                group = group.first().group,
-                action = group.first().action,
+                group = main.group,
+                action = main.action,
+                anchorX = (main.left + main.right) / 2f,
+                anchorY = (main.top + main.bottom) / 2f,
             )
         }
 
@@ -2169,6 +2184,7 @@ class MainActivity : Activity() {
                 isClickable = true
                 setOnClickListener { hotspot.action() }
                 foreground = ovalFocusRing()
+                tag = PointF(hotspot.anchorX * width, hotspot.anchorY * height)
             }
         }
         exactHomeHotspots.forEach(homeOrbitRoot::addView)
