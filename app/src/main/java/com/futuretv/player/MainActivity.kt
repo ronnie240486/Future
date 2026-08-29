@@ -2979,21 +2979,33 @@ class MainActivity : Activity() {
         }
     }
 
+    private var lastRenderedCatalogKind: MediaKind? = null
+    private var lastRenderedWasRadio = false
+
     private fun renderCatalog() {
         if (radioMode || !databaseBackedCatalog) {
             catalogAdapter.submit(visibleItems(), selectedEntry?.key)
             channelList.post { configureExplicitFocusGraph() }
+            lastRenderedCatalogKind = currentKind
+            lastRenderedWasRadio = radioMode
             return
         }
         pageRequestId++
         pagedItems.clear()
         pageLoading = false
         pageFinished = false
-        // Não chama catalogAdapter.submit(emptyList()) aqui: isso deixava a
-        // lista visivelmente vazia por um instante até a primeira página do
-        // banco responder, e era a causa real do "piscar". A lista antiga
-        // fica na tela até loadNextPage() trazer os dados novos e trocar de
-        // uma vez só.
+        // Só mantém a lista antiga visível (evita "piscar") se for uma troca
+        // dentro do MESMO tipo de conteúdo (ex.: mudar de categoria dentro
+        // de Filmes). Se o tipo mudou de verdade (ex.: saindo do modo Rádio,
+        // ou trocando de Filmes pra Séries), limpa na hora -- mostrar
+        // conteúdo do tipo ERRADO enquanto espera (ex.: rádio aparecendo na
+        // aba Filmes) é bem mais confuso do que uma tela vazia por um
+        // instante.
+        if (lastRenderedCatalogKind != currentKind || lastRenderedWasRadio) {
+            catalogAdapter.submit(emptyList(), null)
+        }
+        lastRenderedCatalogKind = currentKind
+        lastRenderedWasRadio = false
         loadNextPage()
     }
 
