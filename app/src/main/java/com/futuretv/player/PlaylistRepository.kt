@@ -226,24 +226,7 @@ class PlaylistRepository(private val context: Context) {
         val normalized = normalizeUrls(urls)
         xtreamSource = normalized.asSequence().mapNotNull(::parseXtreamSource).firstOrNull()
         externalMetadataByKey = emptyMap()
-        val combinedEmitter: (List<String>, (CatalogEntry) -> Unit) -> Unit = combined@{ urlList, emit ->
-            val source = xtreamSource
-            if (source != null) {
-                val jsonCount = runCatching { streamXtreamLiveAndMovies(source, emit) }.getOrNull()
-                if (jsonCount != null && jsonCount > 0) {
-                    // API JSON deu conta de canais/filmes -- só falta buscar
-                    // as séries, que ainda vêm do M3U (a API separa série de
-                    // episódio, exigiria uma chamada por série).
-                    runCatching { streamUrls(urlList) { entry -> if (entry.kind == MediaKind.SERIES) emit(entry) } }
-                    return@combined
-                }
-            }
-            // Sem fonte Xtream reconhecida, ou a API JSON não respondeu nada
-            // usável (painel não-Xtream, endpoint bloqueado, etc.) -- volta
-            // pro caminho M3U completo de sempre.
-            streamUrls(urlList, emit)
-        }
-        val stats = database.replaceStreaming({ emit -> combinedEmitter(normalized, emit) }, onProgress, onCatalogReady)
+        val stats = database.replaceStreaming({ emit -> streamUrls(normalized, emit) }, onProgress, onCatalogReady)
         if (stats.total == 0) error("A lista do painel está vazia ou indisponível")
         onProgress(100)
         saveSourceMetadata(normalized)
