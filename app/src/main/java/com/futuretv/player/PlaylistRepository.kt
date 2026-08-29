@@ -65,6 +65,15 @@ class PlaylistRepository(private val context: Context) {
         private val SEASON_NAME_PATTERN = Regex("\\bs\\d{1,2}\\b|\\btemporada\\s*\\d{1,2}", RegexOption.IGNORE_CASE)
     }
     private val executor = Executors.newSingleThreadExecutor()
+    // A importacao (downloadAndCache) e uma tarefa longa (minutos, catalogos
+    // grandes). Se rodar na MESMA thread unica usada por toda consulta
+    // rapida (queryPage, loadCached, etc.), enquanto a importacao processa
+    // um trecho grande ela "sequestra" essa thread inteira -- uma troca de
+    // secao (ex.: Radios -> Canais) fica presa esperando a consulta rodar,
+    // parecendo travada na tela anterior ate a importacao ceder a vez.
+    // (Essa separacao ja tinha sido feita antes e foi perdida numa fusao de
+    // codigo posterior -- reaplicada aqui.)
+    private val importExecutor = Executors.newSingleThreadExecutor()
     private val cacheFile = File(context.filesDir, "catalog-cache.tsv.gz")
     private val metadata = context.getSharedPreferences("playlist_cache_metadata", Context.MODE_PRIVATE)
     private val database = CatalogDatabase(context)
@@ -72,7 +81,7 @@ class PlaylistRepository(private val context: Context) {
     fun load(url: String, callback: (Result<CatalogSnapshot>) -> Unit) = load(listOf(url), callback)
 
     fun load(urls: List<String>, callback: (Result<CatalogSnapshot>) -> Unit) {
-        executor.execute {
+        importExecutor.execute {
             val result = runCatching { downloadAndCache(urls) }.recoverCatching {
                 val stats = database.stats()
                 if (stats.total == 0) throw it
@@ -83,7 +92,7 @@ class PlaylistRepository(private val context: Context) {
     }
 
     fun loadRemoteOnly(urls: List<String>, callback: (Result<CatalogSnapshot>) -> Unit) {
-        executor.execute { callback(runCatching { downloadAndCache(urls) }) }
+        importExecutor.execute { callback(runCatching { downloadAndCache(urls) }) }
     }
 
     fun loadIfChanged(urls: List<String>, callback: (Result<CatalogSnapshot>) -> Unit) = loadIfChanged(urls, {}, callback)
