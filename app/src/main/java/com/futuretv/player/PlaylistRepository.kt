@@ -106,7 +106,7 @@ class PlaylistRepository(private val context: Context) {
         onCatalogReady: (CatalogDatabase.Stats) -> Unit,
         callback: (Result<CatalogSnapshot>) -> Unit,
     ) {
-        executor.execute {
+        importExecutor.execute {
             val result = runCatching {
                 val normalized = normalizeUrls(urls)
                 xtreamSource = normalized.asSequence().mapNotNull(::parseXtreamSource).firstOrNull()
