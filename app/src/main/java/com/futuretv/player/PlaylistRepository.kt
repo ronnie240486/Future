@@ -217,14 +217,133 @@ class PlaylistRepository(private val context: Context) {
         val normalized = normalizeUrls(urls)
         xtreamSource = normalized.asSequence().mapNotNull(::parseXtreamSource).firstOrNull()
         externalMetadataByKey = emptyMap()
-        val stats = database.replaceStreaming({ emit -> streamUrls(normalized, emit) }, onProgress, onCatalogReady)
+        val combinedEmitter: (List<String>, (CatalogEntry) -> Unit) -> Unit = combined@{ urlList, emit ->
+            val source = xtreamSource
+            if (source != null) {
+                val jsonCount = runCatching { streamXtreamLiveAndMovies(source, emit) }.getOrNull()
+                if (jsonCount != null && jsonCount > 0) {
+                    // API JSON deu conta de canais/filmes -- só falta buscar
+                    // as séries, que ainda vêm do M3U (a API separa série de
+                    // episódio, exigiria uma chamada por série).
+                    runCatching { streamUrls(urlList) { entry -> if (entry.kind == MediaKind.SERIES) emit(entry) } }
+                    return@combined
+                }
+            }
+            // Sem fonte Xtream reconhecida, ou a API JSON não respondeu nada
+            // usável (painel não-Xtream, endpoint bloqueado, etc.) -- volta
+            // pro caminho M3U completo de sempre.
+            streamUrls(urlList, emit)
+        }
+        val stats = database.replaceStreaming({ emit -> combinedEmitter(normalized, emit) }, onProgress, onCatalogReady)
         if (stats.total == 0) error("A lista do painel está vazia ou indisponível")
         onProgress(100)
         saveSourceMetadata(normalized)
         return CatalogSnapshot(emptyList(), totalCount = stats.total, groupCount = stats.groups, databaseBacked = true)
     }
 
+    // Timeout maior que requestBody() (usado pra buscas pontuais de metadado) --
+    // aqui a resposta pode ser grande (todos os canais/filmes do painel).
+    private fun requestBodyBulk(endpoint: String): String? = runCatching {
+        val connection = (URL(endpoint).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 8_000
+            readTimeout = 45_000
+            setRequestProperty("Accept", "application/json")
+            setRequestProperty("Accept-Encoding", "gzip")
+            setRequestProperty("User-Agent", "MaximusTVPlayer/1.0 AndroidTV")
+        }
+        val status = connection.responseCode
+        val rawStream = (if (status in 200..299) connection.inputStream else connection.errorStream)
+        val stream = if (connection.getHeaderField("Content-Encoding").equals("gzip", true)) GZIPInputStream(rawStream) else rawStream
+        val body = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+        connection.disconnect()
+        if (status !in 200..299 || body.isBlank()) null else body
+    }.getOrNull()
+
+    private fun fetchXtreamCategoryNames(source: XtreamSource, action: String): Map<String, String> {
+        val body = requestBodyBulk(xtreamEndpoint(source, action)) ?: return emptyMap()
+        val array = runCatching { org.json.JSONArray(body) }.getOrNull() ?: return emptyMap()
+        val result = mutableMapOf<String, String>()
+        for (i in 0 until array.length()) {
+            val obj = array.optJSONObject(i) ?: continue
+            val id = obj.optString("category_id").orEmpty()
+            val name = obj.optString("category_name").orEmpty()
+            if (id.isNotBlank() && name.isNotBlank()) result[id] = name
+        }
+        return result
+    }
+
+    // Importa canais ao vivo e filmes direto pela API JSON do Xtream
+    // (get_live_streams/get_vod_streams), em vez de baixar e interpretar o
+    // M3U inteiro linha por linha -- json com parser nativo (org.json) e bem
+    // mais rapido que regex em texto pra um volume grande de itens. Series
+    // continuam pelo M3U (ver streamUrls) porque a API separa serie de
+    // episodio -- precisaria de uma chamada por serie, arriscado demais pra
+    // adicionar sem poder testar ao vivo.
+    // Retorna null se a fonte nao respondeu nada usavel (nesse caso quem
+    // chamou deve cair pro caminho M3U tradicional).
+    private fun streamXtreamLiveAndMovies(source: XtreamSource, emit: (CatalogEntry) -> Unit): Int? {
+        var emitted = 0
+        val liveCategories = fetchXtreamCategoryNames(source, "get_live_categories")
+        val vodCategories = fetchXtreamCategoryNames(source, "get_vod_categories")
+
+        val liveBody = requestBodyBulk(xtreamEndpoint(source, "get_live_streams"))
+        if (liveBody != null) {
+            val array = runCatching { org.json.JSONArray(liveBody) }.getOrNull()
+            if (array != null) {
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    val streamId = obj.optString("stream_id").orEmpty()
+                    val name = cleanDisplayName(obj.optString("name").orEmpty())
+                    if (streamId.isBlank() || name.isBlank()) continue
+                    val categoryId = obj.optString("category_id").orEmpty()
+                    val streamUrl = "${source.baseUrl}/live/${source.username}/${source.password}/$streamId.ts"
+                    emit(CatalogEntry(
+                        key = "live$streamId|$streamUrl",
+                        name = name,
+                        groupTitle = liveCategories[categoryId].orEmpty().ifBlank { "Sem categoria" },
+                        tvgId = obj.optString("epg_channel_id").orEmpty(),
+                        logoUrl = cleanAssetUrl(obj.optString("stream_icon").orEmpty()),
+                        streamUrl = streamUrl,
+                        kind = MediaKind.LIVE,
+                        quality = QUALITY_PATTERN.find(name)?.value?.uppercase().orEmpty(),
+                    ))
+                    emitted++
+                }
+            }
+        }
+
+        val vodBody = requestBodyBulk(xtreamEndpoint(source, "get_vod_streams"))
+        if (vodBody != null) {
+            val array = runCatching { org.json.JSONArray(vodBody) }.getOrNull()
+            if (array != null) {
+                for (i in 0 until array.length()) {
+                    val obj = array.optJSONObject(i) ?: continue
+                    val streamId = obj.optString("stream_id").orEmpty()
+                    val name = cleanDisplayName(obj.optString("name").orEmpty())
+                    if (streamId.isBlank() || name.isBlank()) continue
+                    val categoryId = obj.optString("category_id").orEmpty()
+                    val ext = obj.optString("container_extension").orEmpty().ifBlank { "mp4" }
+                    val streamUrl = "${source.baseUrl}/movie/${source.username}/${source.password}/$streamId.$ext"
+                    emit(CatalogEntry(
+                        key = "vod$streamId|$streamUrl",
+                        name = name,
+                        groupTitle = vodCategories[categoryId].orEmpty().ifBlank { "Sem categoria" },
+                        tvgId = "",
+                        logoUrl = cleanAssetUrl(obj.optString("stream_icon").orEmpty()),
+                        streamUrl = streamUrl,
+                        kind = MediaKind.MOVIE,
+                        quality = QUALITY_PATTERN.find(name)?.value?.uppercase().orEmpty(),
+                        year = obj.optString("release_date").orEmpty().take(4),
+                    ))
+                    emitted++
+                }
+            }
+        }
+        return if (emitted > 0) emitted else null
+    }
+
     private fun normalizeUrls(urls: List<String>): List<String> = urls.map { it.trim() }.filter { it.isNotBlank() }.distinct()
+
 
     private fun parseXtreamSource(value: String): XtreamSource? = runCatching {
         val uri = Uri.parse(value)
