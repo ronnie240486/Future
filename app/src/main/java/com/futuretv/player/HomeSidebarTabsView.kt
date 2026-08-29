@@ -90,13 +90,13 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
             row.addView(TextView(context).apply {
                 text = tab.title
                 setTextColor(Color.rgb(248, 250, 255))
-                textSize = 13f
-                textScaleX = 0.78f
+                textSize = 12f
+                textScaleX = 0.70f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 gravity = Gravity.CENTER_VERTICAL
                 maxLines = 1
                 isSingleLine = true
-                ellipsize = null
+                ellipsize = android.text.TextUtils.TruncateAt.END
                 includeFontPadding = false
                 letterSpacing = 0.005f
                 layoutParams = LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f).apply {

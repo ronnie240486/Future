@@ -3942,7 +3942,9 @@ class MainActivity : Activity() {
             renderActions(entry)
             renderCatalog()
         }
-        actions += "⌕  BUSCAR" to { showSearchDialog() }
+        // Removido "BUSCAR" -- já tem a busca no ícone de lupa no canto
+        // superior direito; aqui só ocupava espaço e cortava o texto dos
+        // outros botões.
         actions.forEachIndexed { index, (label, clickAction) ->
             val                 action = TextView(this).apply {
                     id = View.generateViewId()
@@ -3952,7 +3954,7 @@ class MainActivity : Activity() {
                 maxLines = 1
                 isFocusable = true
                 isClickable = true
-                setPadding(dp(16), 0, dp(16), 0)
+                setPadding(dp(8), 0, dp(8), 0)
                 setTextColor(Color.WHITE)
                 elevation = dp(3).toFloat()
                 background = actionButtonBackground(index == 0, false)
