@@ -95,6 +95,40 @@ class PlaylistRepository(private val context: Context) {
         importExecutor.execute { callback(runCatching { downloadAndCache(urls) }) }
     }
 
+    // Só pra DIAGNOSTICO -- roda a busca JSON numa fonte Xtream e conta
+    // quantos itens ela encontraria, SEM gravar nada no banco e sem afetar
+    // o catalogo real (que continua vindo do M3U). Serve pra comparar as
+    // contagens antes de arriscar trocar o caminho principal de novo.
+    fun runXtreamJsonDiagnostic(urls: List<String>, onResult: (String) -> Unit) {
+        importExecutor.execute {
+            val normalized = normalizeUrls(urls)
+            val source = normalized.asSequence().mapNotNull(::parseXtreamSource).firstOrNull()
+            if (source == null) {
+                onResult("DIAG-JSON: nenhuma fonte Xtream reconhecida nessa lista.")
+                return@execute
+            }
+            var liveCount = 0
+            var movieCount = 0
+            val jsonTotal = runCatching {
+                streamXtreamLiveAndMovies(source) { entry ->
+                    when (entry.kind) {
+                        MediaKind.LIVE -> liveCount++
+                        MediaKind.MOVIE -> movieCount++
+                        else -> {}
+                    }
+                }
+            }.getOrNull()
+            val dbStats = runCatching { database.stats() }.getOrNull()
+            val message = if (jsonTotal == null) {
+                "DIAG-JSON: a API JSON não respondeu nada usável pra essa fonte."
+            } else {
+                "DIAG-JSON: API achou $liveCount canais e $movieCount filmes. " +
+                    "M3U (real, no banco) tem ${dbStats?.live ?: "?"} canais e ${dbStats?.movies ?: "?"} filmes."
+            }
+            onResult(message)
+        }
+    }
+
     fun loadIfChanged(urls: List<String>, callback: (Result<CatalogSnapshot>) -> Unit) = loadIfChanged(urls, {}, callback)
 
     fun loadIfChanged(urls: List<String>, onProgress: (Int) -> Unit, callback: (Result<CatalogSnapshot>) -> Unit) =

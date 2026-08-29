@@ -311,6 +311,12 @@ class ActivationActivity : Activity() {
                     connectButton.isEnabled = true
                     extraSettingsButton.isEnabled = true
                     playlistResult.onSuccess {
+                        // DIAGNOSTICO temporario: roda a busca JSON so pra
+                        // COMPARAR contagens com o M3U real -- nao afeta o
+                        // catalogo, so mostra um aviso com os numeros.
+                        playlistRepository.runXtreamJsonDiagnostic(listOf(manualUrl)) { message ->
+                            runOnUiThread { Toast.makeText(this@ActivationActivity, message, Toast.LENGTH_LONG).show() }
+                        }
                         setConnectionProgress(100, "Conectado. Em breve você terá em mãos o melhor conteúdo para assistir.")
                         status.text = "Catálogo completo."
                         status.setTextColor(getColor(R.color.success))
