@@ -3241,12 +3241,23 @@ class MainActivity : Activity() {
             startMiniPlayer(entry)
             return
         }
-        // Filme/série: o foco (só passar o D-pad, sem clicar) já dispara o
-        // trailer sozinho via onSelected -> scheduleTrailerPreview. O clique
-        // aqui abre de verdade -- filme reproduz, série mostra as temporadas
-        // -- sem precisar de um segundo clique nem descer até o botão.
+        // Filme/série: o foco (D-pad chegando no item, sem clicar) já
+        // dispara o trailer sozinho via onSelected -> scheduleTrailerPreview.
+        // No controle remoto, até o clique acontecer o trailer normalmente
+        // já apareceu (o usuário parou nele um instante) -- então o clique
+        // abre direto, parecendo "um clique só". Já no toque (celular), focar
+        // e clicar acontecem ao MESMO tempo (um toque só), sem dar tempo do
+        // trailer aparecer -- por isso aqui verificamos se o trailer já está
+        // de fato visível: se não estiver, o toque só garante que ele comece
+        // a carregar; um segundo toque no mesmo item, com o trailer já
+        // tocando, é que abre de verdade.
+        val trailerAlreadyShowing = sameEntry && previewMode == PreviewMode.TRAILER
+        if (trailerAlreadyShowing) {
+            if (isSeriesRootEntry(entry)) showSeriesSeasonsDialog(entry) else openEntry(entry)
+            return
+        }
         selectEntry(entry, true)
-        if (isSeriesRootEntry(entry)) showSeriesSeasonsDialog(entry) else openEntry(entry)
+        scheduleTrailerPreview(entry)
     }
 
     private fun startContentPreview(entry: CatalogEntry) {
