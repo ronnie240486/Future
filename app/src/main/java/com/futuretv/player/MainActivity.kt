@@ -377,9 +377,14 @@ class MainActivity : Activity() {
         brandSubtitle = findViewById(R.id.brandSubtitle)
         channelList = findViewById(R.id.channelList)
         videoPreview = findViewById(R.id.videoPreview)
-        videoPreview.layoutParams = videoPreview.layoutParams.apply {
-            height = (resources.displayMetrics.heightPixels * 0.60f).toInt()
+        fun applyVideoPreviewHeight() {
+            videoPreview.layoutParams = videoPreview.layoutParams.apply {
+                height = (resources.displayMetrics.heightPixels * 0.72f).toInt()
+            }
+            videoPreview.requestLayout()
         }
+        applyVideoPreviewHeight()
+        videoPreview.post { applyVideoPreviewHeight() }
         previewScroll = findViewById(R.id.previewScroll)
         categoryList = findViewById(R.id.categoryList)
         sortRow = findViewById(R.id.sortRow)
