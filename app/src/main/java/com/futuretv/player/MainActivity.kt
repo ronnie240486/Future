@@ -77,6 +77,7 @@ class MainActivity : Activity() {
 
     private val pageSize = 120
     private lateinit var channelList: RecyclerView
+    private lateinit var channelListLoadingHint: TextView
     private lateinit var videoPreview: FrameLayout
     private lateinit var previewScroll: ScrollView
     private lateinit var categoryList: LinearLayout
@@ -377,6 +378,7 @@ class MainActivity : Activity() {
         brandMark = findViewById(R.id.brandMark)
         brandSubtitle = findViewById(R.id.brandSubtitle)
         channelList = findViewById(R.id.channelList)
+        channelListLoadingHint = findViewById(R.id.channelListLoadingHint)
         videoPreview = findViewById(R.id.videoPreview)
         fun applyVideoPreviewHeight() {
             videoPreview.layoutParams = videoPreview.layoutParams.apply {
@@ -2984,6 +2986,7 @@ class MainActivity : Activity() {
 
     private fun renderCatalog() {
         if (radioMode || !databaseBackedCatalog) {
+            channelListLoadingHint.visibility = View.GONE
             catalogAdapter.submit(visibleItems(), selectedEntry?.key)
             channelList.post { configureExplicitFocusGraph() }
             lastRenderedCatalogKind = currentKind
@@ -3003,6 +3006,11 @@ class MainActivity : Activity() {
         // instante.
         if (lastRenderedCatalogKind != currentKind || lastRenderedWasRadio) {
             catalogAdapter.submit(emptyList(), null)
+            // Mostra um aviso de "carregando" em vez de deixar a tela
+            // parecer travada/vazia sem explicação -- especialmente notável
+            // durante a importação pesada, quando a consulta pode demorar
+            // alguns segundos.
+            channelListLoadingHint.visibility = View.VISIBLE
         }
         lastRenderedCatalogKind = currentKind
         lastRenderedWasRadio = false
@@ -3042,6 +3050,7 @@ class MainActivity : Activity() {
                         }, 1_200L)
                         return@runOnUiThread
                     }
+                    channelListLoadingHint.visibility = View.GONE
                     pageFinished = true
                     if (offset == 0) {
                         selectedEntry = null
@@ -3050,6 +3059,7 @@ class MainActivity : Activity() {
                     }
                     return@runOnUiThread
                 }
+                channelListLoadingHint.visibility = View.GONE
                 pagedItems.addAll(page)
                 if (offset == 0) {
                     val layoutManager = channelList.layoutManager as? LinearLayoutManager
