@@ -3231,26 +3231,27 @@ class MainActivity : Activity() {
         }
         recordWatch(entry)
         val sameEntry = miniPlayerEntryKey == entry.key
-        if (isSeriesRootEntry(entry)) {
+        if (entry.kind == MediaKind.LIVE) {
+            if (sameEntry && previewMode == PreviewMode.CONTENT) {
+                expandMiniPlayer()
+                return
+            }
             selectEntry(entry, true)
-            // Clicar direto na série já abre as temporadas -- sem isso,
-            // era preciso descer até o botão "TEMPORADAS" separadamente.
-            showSeriesSeasonsDialog(entry)
+            recordChannelWatch(entry)
+            startMiniPlayer(entry)
             return
         }
-        if (entry.kind == MediaKind.LIVE && sameEntry && previewMode == PreviewMode.CONTENT) {
-            expandMiniPlayer()
+        // Filme/série: 1º clique inicia o trailer (mesmo mecanismo do foco,
+        // mas garantido aqui pro clique); um 2º clique NO MESMO item
+        // enquanto o trailer já está tocando é que realmente abre --
+        // filme reproduz, série mostra as temporadas.
+        val trailerAlreadyShowing = sameEntry && previewMode == PreviewMode.TRAILER
+        if (trailerAlreadyShowing) {
+            if (isSeriesRootEntry(entry)) showSeriesSeasonsDialog(entry) else openEntry(entry)
             return
         }
         selectEntry(entry, true)
-        if (entry.kind == MediaKind.LIVE) {
-            recordChannelWatch(entry)
-            startMiniPlayer(entry)
-        } else {
-            // Filme ou episódio de série: abre direto em vez de só
-            // selecionar e exigir um clique extra no botão embaixo.
-            openEntry(entry)
-        }
+        scheduleTrailerPreview(entry)
     }
 
     private fun startContentPreview(entry: CatalogEntry) {
