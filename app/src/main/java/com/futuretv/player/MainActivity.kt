@@ -216,6 +216,7 @@ class MainActivity : Activity() {
     // episódio especificamente, não a capa do show).
     private val seriesPosterCache = mutableMapOf<String, String>()
     private val seriesPosterFetching = mutableSetOf<String>()
+    private val seriesPosterFailed = mutableSetOf<String>()
     private var selectedCategory = "Todos"
     private var query = ""
     private var favoritesOnly = false
@@ -3888,7 +3889,7 @@ class MainActivity : Activity() {
 
     private fun requestPosterIfNeeded(entry: CatalogEntry) {
         val cacheKey = posterCacheKey(entry)
-        if (cacheKey in seriesPosterCache || cacheKey in seriesPosterFetching) return
+        if (cacheKey in seriesPosterCache || cacheKey in seriesPosterFetching || cacheKey in seriesPosterFailed) return
         seriesPosterFetching += cacheKey
         repository.enrichMetadata(entry) { metadata ->
             runOnUiThread {
@@ -3897,6 +3898,13 @@ class MainActivity : Activity() {
                 if (poster != null) {
                     seriesPosterCache[cacheKey] = poster
                     if (::catalogAdapter.isInitialized) catalogAdapter.refreshItemsMatching { posterCacheKey(it) == cacheKey }
+                } else {
+                    // Sem isso, todo re-bind desse item (rolar, atualizar a
+                    // lista) disparava uma NOVA busca na TMDB pra sempre --
+                    // um item que a TMDB nunca acha ficava tentando
+                    // infinitamente, sobrecarregando a rede e competindo
+                    // com o carregamento normal do resto do app.
+                    seriesPosterFailed += cacheKey
                 }
             }
         }
