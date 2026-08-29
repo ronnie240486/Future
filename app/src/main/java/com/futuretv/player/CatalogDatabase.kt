@@ -6,7 +6,7 @@ import android.database.sqlite.SQLiteDatabase
 import android.database.sqlite.SQLiteOpenHelper
 
 class CatalogDatabase(context: Context) {
-    data class Stats(val total: Int, val live: Int, val movies: Int, val series: Int, val groups: Int)
+    data class Stats(val total: Int, val live: Int, val movies: Int, val series: Int, val groups: Int, val seenTotal: Int = 0, val rejectedDuplicate: Int = 0)
 
     private val helper = Helper(context.applicationContext)
 
@@ -20,6 +20,8 @@ class CatalogDatabase(context: Context) {
         var liveCount = 0
         var movieCount = 0
         var seriesCount = 0
+        var seenTotal = 0
+        var rejectedDuplicate = 0
         val groups = HashSet<String>()
         var transactionOpen = false
         var readySent = false
@@ -53,6 +55,7 @@ class CatalogDatabase(context: Context) {
                     "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             )
             feed { entry ->
+                seenTotal++
                 statement.clearBindings()
                 bind(statement, entry)
                 val insertedRowId = statement.executeInsert()
@@ -73,6 +76,14 @@ class CatalogDatabase(context: Context) {
                         }
                         beginBatch()
                     }
+                } else {
+                    // A linha tinha uma item_key que já existia -- ou é uma
+                    // duplicata de verdade no M3U do provedor, ou (mais
+                    // preocupante) um choque de chave entre itens
+                    // DIFERENTES. Antes isso desaparecia silenciosamente;
+                    // agora fica contado e visível no log pra confirmar com
+                    // números reais em vez de suposição.
+                    rejectedDuplicate++
                 }
             }
             commitBatch()
@@ -87,7 +98,7 @@ class CatalogDatabase(context: Context) {
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_season ON $TABLE(kind, series_group, season)")
             db.execSQL("PRAGMA synchronous=NORMAL")
         }
-        return Stats(total, liveCount, movieCount, seriesCount, groups.size)
+        return Stats(total, liveCount, movieCount, seriesCount, groups.size, seenTotal, rejectedDuplicate)
     }
 
     fun replace(entries: Sequence<CatalogEntry>): Stats = replaceStreaming({ emit -> entries.forEach(emit) })

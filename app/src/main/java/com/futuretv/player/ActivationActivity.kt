@@ -310,7 +310,14 @@ class ActivationActivity : Activity() {
                     verifyButton.isEnabled = true
                     connectButton.isEnabled = true
                     extraSettingsButton.isEnabled = true
-                    playlistResult.onSuccess {
+                    playlistResult.onSuccess { snapshot ->
+                        if (snapshot.rejectedDuplicate > 0) {
+                            Toast.makeText(
+                                this@ActivationActivity,
+                                "Importação: ${snapshot.seenTotal} itens no M3U, ${snapshot.totalCount} salvos, ${snapshot.rejectedDuplicate} rejeitados por chave duplicada.",
+                                Toast.LENGTH_LONG,
+                            ).show()
+                        }
                         setConnectionProgress(100, "Conectado. Em breve você terá em mãos o melhor conteúdo para assistir.")
                         status.text = "Catálogo completo."
                         status.setTextColor(getColor(R.color.success))

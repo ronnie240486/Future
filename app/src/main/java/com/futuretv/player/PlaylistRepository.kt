@@ -264,7 +264,7 @@ class PlaylistRepository(private val context: Context) {
         if (stats.total == 0) error("A lista do painel está vazia ou indisponível")
         onProgress(100)
         saveSourceMetadata(normalized)
-        return CatalogSnapshot(emptyList(), totalCount = stats.total, groupCount = stats.groups, databaseBacked = true)
+        return CatalogSnapshot(emptyList(), totalCount = stats.total, groupCount = stats.groups, databaseBacked = true, seenTotal = stats.seenTotal, rejectedDuplicate = stats.rejectedDuplicate)
     }
 
     // Timeout maior que requestBody() (usado pra buscas pontuais de metadado) --
