@@ -84,76 +84,70 @@ class CatalogAdapter(
         val density = context.resources.displayMetrics.density
         fun dp(value: Int): Int = (value * density).roundToInt()
 
-        val card = FrameLayout(context).apply {
+        val card = LinearLayout(context).apply {
+            orientation = LinearLayout.HORIZONTAL
+            gravity = Gravity.CENTER_VERTICAL
             isFocusable = true
             isClickable = true
-            clipChildren = true
-            clipToPadding = false
-            setPadding(0, 0, 0, 0)
-            layoutParams = RecyclerView.LayoutParams(-1, dp(96)).apply {
-                setMargins(0, dp(5), 0, dp(5))
+            setPadding(dp(10), 0, dp(12), 0)
+            layoutParams = RecyclerView.LayoutParams(-1, dp(64)).apply {
+                setMargins(0, dp(3), 0, dp(3))
             }
         }
+        val logoBox = FrameLayout(context).apply {
+            layoutParams = LinearLayout.LayoutParams(dp(84), dp(50))
+            background = rounded(0xFF0B1424, 8f * density)
+            clipChildren = true
+        }
         val logo = ImageView(context).apply {
-            scaleType = ImageView.ScaleType.CENTER_CROP
-            layoutParams = FrameLayout.LayoutParams(-1, -1)
+            scaleType = ImageView.ScaleType.FIT_CENTER
+            layoutParams = FrameLayout.LayoutParams(-1, -1, Gravity.CENTER).apply {
+                val pad = dp(6)
+                setMargins(pad, pad, pad, pad)
+            }
             contentDescription = null
         }
-        val scrim = View(context).apply {
-            layoutParams = FrameLayout.LayoutParams(-1, -1)
-            background = GradientDrawable(
-                GradientDrawable.Orientation.TOP_BOTTOM,
-                intArrayOf(0x00000000, 0xE600081A.toInt()),
-            )
+        logoBox.addView(logo)
+        val number = TextView(context).apply {
+            setTextColor(Color.rgb(150, 170, 200))
+            textSize = 11f
+            gravity = Gravity.CENTER
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            layoutParams = LinearLayout.LayoutParams(dp(28), -1)
         }
         val textBlock = LinearLayout(context).apply {
             orientation = LinearLayout.VERTICAL
-            gravity = Gravity.BOTTOM
-            setPadding(dp(14), 0, dp(14), dp(12))
-            layoutParams = FrameLayout.LayoutParams(-1, dp(68), Gravity.BOTTOM)
+            gravity = Gravity.CENTER_VERTICAL
+            setPadding(dp(12), 0, dp(8), 0)
+            layoutParams = LinearLayout.LayoutParams(0, -1, 1f)
         }
         val title = TextView(context).apply {
             setTextColor(Color.WHITE)
-            textSize = 15f
-            maxLines = 2
+            textSize = 14f
+            maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
             setTypeface(typeface, android.graphics.Typeface.BOLD)
         }
         val subtitle = TextView(context).apply {
-            setTextColor(Color.rgb(178, 212, 226))
-            textSize = 10f
+            setTextColor(Color.rgb(150, 170, 200))
+            textSize = 11f
             maxLines = 1
             ellipsize = android.text.TextUtils.TruncateAt.END
-            layoutParams = LinearLayout.LayoutParams(-1, dp(17)).apply { topMargin = dp(3) }
-        }
-        val number = TextView(context).apply {
-            setTextColor(Color.rgb(220, 242, 255))
-            textSize = 12f
-            gravity = Gravity.CENTER
-            setTypeface(typeface, android.graphics.Typeface.BOLD)
-            background = rounded(0x66213A5C, 11f * density)
-            layoutParams = FrameLayout.LayoutParams(dp(36), dp(30), Gravity.TOP or Gravity.END).apply {
-                topMargin = dp(10)
-                rightMargin = dp(10)
-            }
+            layoutParams = LinearLayout.LayoutParams(-1, -2).apply { topMargin = dp(2) }
         }
         val badge = TextView(context).apply {
             setTextColor(Color.rgb(154, 255, 224))
             textSize = 9f
             gravity = Gravity.CENTER
-            setPadding(dp(8), dp(4), dp(8), dp(4))
+            setPadding(dp(8), dp(3), dp(8), dp(3))
             background = rounded(0x6635A99A, 9f * density)
-            layoutParams = FrameLayout.LayoutParams(-2, dp(25), Gravity.TOP or Gravity.START).apply {
-                topMargin = dp(10)
-                leftMargin = dp(10)
-            }
+            layoutParams = LinearLayout.LayoutParams(-2, -2)
         }
         textBlock.addView(title)
         textBlock.addView(subtitle)
-        card.addView(logo)
-        card.addView(scrim)
-        card.addView(textBlock)
         card.addView(number)
+        card.addView(logoBox)
+        card.addView(textBlock)
         card.addView(badge)
         return Holder(card, logo, number, title, subtitle, badge)
     }
@@ -161,9 +155,8 @@ class CatalogAdapter(
     override fun onBindViewHolder(holder: Holder, position: Int) {
         val item = items[position]
         val density = holder.row.context.resources.displayMetrics.density
-        val cardHeight = if (item.kind == MediaKind.LIVE) 88 else 96
-        holder.row.layoutParams = RecyclerView.LayoutParams(-1, (cardHeight * density).roundToInt()).apply {
-            setMargins(0, (5 * density).roundToInt(), 0, (5 * density).roundToInt())
+        holder.row.layoutParams = RecyclerView.LayoutParams(-1, (64 * density).roundToInt()).apply {
+            setMargins(0, (3 * density).roundToInt(), 0, (3 * density).roundToInt())
         }
         holder.number.text = String.format("%02d", position + 1)
         holder.title.text = if (item.kind == MediaKind.SERIES && item.seriesGroup.isNotBlank()) item.seriesGroup else item.name
