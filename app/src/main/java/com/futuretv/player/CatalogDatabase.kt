@@ -267,7 +267,7 @@ class CatalogDatabase(context: Context) {
 
     fun querySeriesSeasons(seriesGroup: String, group: String, hidden: Set<String>, includeAdult: Boolean = false): List<String> {
         val db = helper.readableDatabase
-        val where = mutableListOf("kind=?", "series_group=?")
+        val where = mutableListOf("kind=?", "LOWER(TRIM(series_group))=LOWER(TRIM(?))")
         val args = mutableListOf(MediaKind.SERIES.name, seriesGroup)
         // Não filtra por group_title aqui: um mesmo seriado pode ter
         // temporadas espalhadas em categorias diferentes no catálogo do
@@ -288,7 +288,7 @@ class CatalogDatabase(context: Context) {
 
     fun querySeriesEpisodes(seriesGroup: String, season: String, group: String, hidden: Set<String>, includeAdult: Boolean = false): List<CatalogEntry> {
         val db = helper.readableDatabase
-        val where = mutableListOf("kind=?", "series_group=?")
+        val where = mutableListOf("kind=?", "LOWER(TRIM(series_group))=LOWER(TRIM(?))")
         val args = mutableListOf(MediaKind.SERIES.name, seriesGroup)
         val seasonExpr = "CASE WHEN TRIM(season) = '' THEN '1' ELSE season END"
         where += "$seasonExpr=?"

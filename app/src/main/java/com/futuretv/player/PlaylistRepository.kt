@@ -881,7 +881,14 @@ class PlaylistRepository(private val context: Context) {
             Regex("\\s*(?:[-|:]+\\s*)?(?:0*\\d{1,2}\\s*[ªº]?\\s*Temporada|Temporada\\s*0*\\d{1,2}|Season\\s*0*\\d{1,2})\\b.*$", RegexOption.IGNORE_CASE),
             "",
         )
-        return withoutSeason.trim().trim('-', '–', '_', '.', '|').replace(Regex("\\s{2,}"), " ").ifBlank { cleaned }
+        // "Capítulo"/"Cap." é o termo padrão de novela brasileira pra episódio
+        // -- sem isso, cada capítulo virava uma "série" diferente (nada era
+        // agrupado), porque o número do capítulo nunca era removido do nome.
+        val withoutChapter = withoutSeason.replace(
+            Regex("\\s*(?:[-|:]+\\s*)?(?:Cap[ií]tulo|Cap)\\.?\\s*0*\\d{1,4}\\b.*$", RegexOption.IGNORE_CASE),
+            "",
+        )
+        return withoutChapter.trim().trim('-', '–', '_', '.', '|').replace(Regex("\\s{2,}"), " ").ifBlank { cleaned }
     }
 
     private fun cleanDisplayName(value: String): String = value

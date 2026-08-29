@@ -2938,6 +2938,21 @@ class MainActivity : Activity() {
 
     private fun renderCategoryButtons(categories: List<String>) {
         categoryList.removeAllViews()
+        val searchPill = TextView(this).apply {
+            id = View.generateViewId()
+            text = "⌕ Buscar"
+            gravity = Gravity.CENTER
+            textSize = 12f
+            isFocusable = true
+            isClickable = true
+            setTextColor(Color.rgb(178, 207, 237))
+            setPadding(dp(14), dp(8), dp(14), dp(8))
+            layoutParams = LinearLayout.LayoutParams(-2, dp(46)).apply { setMargins(dp(4), dp(7), dp(4), dp(7)) }
+            background = categoryChipDrawable(false, false)
+            setOnClickListener { showSearchDialog() }
+            setOnFocusChangeListener { view, hasFocus -> view.background = categoryChipDrawable(false, hasFocus) }
+        }
+        categoryList.addView(searchPill)
         categories.forEach { category ->
             val item = TextView(this).apply {
                 id = View.generateViewId()
