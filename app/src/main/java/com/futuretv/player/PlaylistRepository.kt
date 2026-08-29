@@ -74,6 +74,18 @@ class PlaylistRepository(private val context: Context) {
     // (Essa separacao ja tinha sido feita antes e foi perdida numa fusao de
     // codigo posterior -- reaplicada aqui.)
     private val importExecutor = Executors.newSingleThreadExecutor()
+    // Enriquecimento externo (sinopse/capa/trailer, nota do TMDB, detalhes de
+    // episódio) faz chamadas de REDE, que podem demorar segundos ou travar em
+    // timeout -- bem mais lento e imprevisível que uma consulta local ao
+    // SQLite. Antes essas chamadas rodavam na mesma thread única das
+    // consultas rápidas (queryPage/queryGroups): navegar pela Netflix
+    // enfileirava várias buscas de rede, e trocar pra outra categoria (ex.:
+    // Pluto) ficava PRESO atrás delas na mesma fila, esperando a rede
+    // responder antes de sequer tocar no banco local. Um pool próprio (com
+    // mais de uma thread, já que múltiplas chamadas de rede podem rodar em
+    // paralelo sem disputar recurso local) garante que a troca de categoria
+    // nunca espera por rede.
+    private val metadataExecutor = Executors.newFixedThreadPool(3)
     private val cacheFile = File(context.filesDir, "catalog-cache.tsv.gz")
     private val metadata = context.getSharedPreferences("playlist_cache_metadata", Context.MODE_PRIVATE)
     private val database = CatalogDatabase(context)
@@ -231,7 +243,7 @@ class PlaylistRepository(private val context: Context) {
 
     fun enrichMetadata(entry: CatalogEntry, callback: (CatalogMetadata?) -> Unit) {
         externalMetadataByKey[entry.key]?.let { callback(it); return }
-        executor.execute {
+        metadataExecutor.execute {
             val metadata = runCatching { fetchExternalMetadata(entry) }.getOrNull()
             if (metadata != null && (metadata.synopsis.isNotBlank() || metadata.year.isNotBlank() || metadata.backdrop.isNotBlank() || metadata.trailer.isNotBlank())) {
                 externalMetadataByKey = externalMetadataByKey + (entry.key to metadata)
@@ -438,7 +450,7 @@ class PlaylistRepository(private val context: Context) {
     fun fetchSeriesEpisodeDetails(entry: CatalogEntry, callback: (Map<String, EpisodeDetail>) -> Unit) {
         val cacheKey = entry.seriesGroup.ifBlank { entry.name }
         episodeDetailsCache[cacheKey]?.let { callback(it); return }
-        executor.execute {
+        metadataExecutor.execute {
             val result = runCatching { fetchEpisodeDetailsInternal(entry) }.getOrDefault(emptyMap())
             if (result.isNotEmpty()) episodeDetailsCache[cacheKey] = result
             callback(result)
@@ -480,7 +492,7 @@ class PlaylistRepository(private val context: Context) {
         val cacheKey = normalizeMetadataName(title)
         if (cacheKey.isBlank()) { callback(null); return }
         if (tmdbRatingCache.containsKey(cacheKey)) { callback(tmdbRatingCache[cacheKey]); return }
-        executor.execute {
+        metadataExecutor.execute {
             val rating = runCatching { fetchTmdbRatingInternal(entry, title) }.getOrNull()
             tmdbRatingCache[cacheKey] = rating
             callback(rating)
@@ -641,6 +653,7 @@ class PlaylistRepository(private val context: Context) {
 
     fun shutdown() {
         executor.shutdownNow()
+        metadataExecutor.shutdownNow()
         database.close()
     }
 
