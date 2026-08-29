@@ -3241,17 +3241,12 @@ class MainActivity : Activity() {
             startMiniPlayer(entry)
             return
         }
-        // Filme/série: 1º clique inicia o trailer (mesmo mecanismo do foco,
-        // mas garantido aqui pro clique); um 2º clique NO MESMO item
-        // enquanto o trailer já está tocando é que realmente abre --
-        // filme reproduz, série mostra as temporadas.
-        val trailerAlreadyShowing = sameEntry && previewMode == PreviewMode.TRAILER
-        if (trailerAlreadyShowing) {
-            if (isSeriesRootEntry(entry)) showSeriesSeasonsDialog(entry) else openEntry(entry)
-            return
-        }
+        // Filme/série: o foco (só passar o D-pad, sem clicar) já dispara o
+        // trailer sozinho via onSelected -> scheduleTrailerPreview. O clique
+        // aqui abre de verdade -- filme reproduz, série mostra as temporadas
+        // -- sem precisar de um segundo clique nem descer até o botão.
         selectEntry(entry, true)
-        scheduleTrailerPreview(entry)
+        if (isSeriesRootEntry(entry)) showSeriesSeasonsDialog(entry) else openEntry(entry)
     }
 
     private fun startContentPreview(entry: CatalogEntry) {
