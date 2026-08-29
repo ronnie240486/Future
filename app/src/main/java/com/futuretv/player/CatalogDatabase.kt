@@ -25,7 +25,13 @@ class CatalogDatabase(context: Context) {
         val groups = HashSet<String>()
         var transactionOpen = false
         var readySent = false
-        val batchSize = 2_000
+        val batchSize = 5_000
+        // Limiar pra sinalizar "pronto pra navegar" -- mais baixo que o lote
+        // de commit normal, pra nao atrasar quando o app fica usavel so
+        // porque o lote de gravacao ficou maior (menos commits = menos
+        // disputa com leitores, mas o usuario nao devia esperar mais por
+        // causa disso).
+        val readyThreshold = 2_000
         // O catálogo é um cache reconstruível: durante a importação, priorizamos velocidade.
         db.execSQL("PRAGMA synchronous=OFF")
         db.execSQL("PRAGMA temp_store=MEMORY")
@@ -70,11 +76,18 @@ class CatalogDatabase(context: Context) {
                     if (total % 2_000 == 0) onProgress((60 + total / 8_000).coerceAtMost(94))
                     if (total % batchSize == 0) {
                         commitBatch()
-                        if (!readySent && total >= batchSize) {
-                            readySent = true
-                            runCatching { onCatalogReady(Stats(total, liveCount, movieCount, seriesCount, groups.size)) }
-                        }
                         beginBatch()
+                    } else if (!readySent && total >= readyThreshold) {
+                        // Precisa commitar AGORA, mesmo sem ter enchido o
+                        // lote inteiro (5000) -- sinalizar "pronto" antes do
+                        // commit deixaria os dados invisíveis pra quem
+                        // consulta (a transação ainda não foi confirmada).
+                        commitBatch()
+                        beginBatch()
+                    }
+                    if (!readySent && total >= readyThreshold) {
+                        readySent = true
+                        runCatching { onCatalogReady(Stats(total, liveCount, movieCount, seriesCount, groups.size)) }
                     }
                 } else {
                     // A linha tinha uma item_key que já existia -- ou é uma
@@ -92,11 +105,16 @@ class CatalogDatabase(context: Context) {
                 db.endTransaction()
                 transactionOpen = false
             }
-            // Recriar fora da transação garante índices mesmo se o download falhar no meio.
+            // Recriar índices precisa de acesso exclusivo por um instante --
+            // sobe o busy_timeout só por esse momento específico, e volta pro
+            // padrão curto (500ms) logo depois, pra não afetar consultas
+            // normais feitas em qualquer outro momento da importação.
+            db.rawQuery("PRAGMA busy_timeout=5000", null)?.use { it.moveToFirst() }
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_kind_group ON $TABLE(kind, group_title)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_name ON $TABLE(name COLLATE NOCASE)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_season ON $TABLE(kind, series_group, season)")
             db.execSQL("PRAGMA synchronous=NORMAL")
+            db.rawQuery("PRAGMA busy_timeout=500", null)?.use { it.moveToFirst() }
         }
         return Stats(total, liveCount, movieCount, seriesCount, groups.size, seenTotal, rejectedDuplicate)
     }
@@ -403,13 +421,15 @@ class CatalogDatabase(context: Context) {
 
         override fun onConfigure(db: SQLiteDatabase) {
             super.onConfigure(db)
-            // Rede de segurança: se algum ponto ainda esbarrar em um lock breve
-            // (ex.: durante o rebuild dos índices ao final da importação, que
-            // precisa de acesso exclusivo), espera até 5s em vez de falhar na hora.
-            // PRAGMA busy_timeout devolve uma linha de resultado, então precisa
-            // ser executado via rawQuery -- execSQL lança SQLiteException para
-            // qualquer comando que retorne resultado.
-            db.rawQuery("PRAGMA busy_timeout=5000", null)?.use { it.moveToFirst() }
+            // Antes esperava até 5s pra QUALQUER consulta que esbarrasse numa
+            // trava breve -- isso incluía navegação normal durante a
+            // importação, nao só o rebuild de índices (que é o único
+            // momento que de fato PRECISA de uma espera longa). Reduzido pro
+            // caso comum: uma consulta que esbarra numa trava agora falha
+            // rápido, e o loop de nova tentativa (já existente,
+            // ~1.2s de intervalo) assume -- ao invés de travar a tela por
+            // até 5 segundos inteiros a cada tentativa.
+            db.rawQuery("PRAGMA busy_timeout=500", null)?.use { it.moveToFirst() }
         }
 
         override fun onCreate(db: SQLiteDatabase) {
