@@ -170,17 +170,8 @@ class CatalogDatabase(context: Context) {
         }
     }
 
-    private fun querySeriesPage(group: String, search: String, hidden: Set<String>, sortMode: SortMode, limit: Int, offset: Int, includeAdult: Boolean): List<CatalogEntry> {
-        // DESATIVADO temporariamente: o agrupamento por "identidade da série"
-        // (series_group/nome) estava colapsando categorias inteiras (ex.:
-        // ReelShorts, Crunchyroll) num único item, escondendo praticamente
-        // todo o conteúdo -- provavelmente porque o título desses provedores
-        // não segue o padrão que a heurística de agrupamento espera. Até
-        // corrigir a heurística com calma (precisa de teste ao vivo pra
-        // confirmar a causa exata), mostra todos os episódios sem agrupar --
-        // menos bonito, mas garante que nada fica escondido.
-        return queryPage(MediaKind.SERIES, group, search, hidden, emptySet(), sortMode, limit, offset, false, includeAdult)
-    }
+    private fun querySeriesPage(group: String, search: String, hidden: Set<String>, sortMode: SortMode, limit: Int, offset: Int, includeAdult: Boolean): List<CatalogEntry> =
+        querySeriesPageGrouped(group, search, hidden, sortMode, limit, offset, includeAdult)
 
     private fun querySeriesPageGrouped(group: String, search: String, hidden: Set<String>, sortMode: SortMode, limit: Int, offset: Int, includeAdult: Boolean): List<CatalogEntry> {
         val db = helper.readableDatabase

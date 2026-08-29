@@ -163,7 +163,14 @@ class CatalogAdapter(
         holder.subtitle.text = when (item.kind) {
             MediaKind.LIVE -> item.groupTitle.ifBlank { "Canal ao vivo" }
             MediaKind.MOVIE -> listOf(item.year, item.groupTitle).filter { it.isNotBlank() }.joinToString("  •  ").ifBlank { "Filme" }
-            MediaKind.SERIES -> item.groupTitle.ifBlank { "Série" }
+            MediaKind.SERIES -> {
+                val episodeLabel = when {
+                    item.season.isNotBlank() && item.episode.isNotBlank() -> "T${item.season} • Ep. ${item.episode}"
+                    item.episode.isNotBlank() -> "Ep. ${item.episode}"
+                    else -> ""
+                }
+                listOf(episodeLabel, item.groupTitle).filter { it.isNotBlank() }.joinToString("  •  ").ifBlank { "Série" }
+            }
         }
         holder.badge.text = item.quality.ifBlank {
             when (item.kind) {
