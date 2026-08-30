@@ -1788,6 +1788,12 @@ class MainActivity : Activity() {
         params.leftMargin = (width * 0.014f).toInt().coerceAtLeast(dp(14))
         params.topMargin = (height * 0.018f).toInt().coerceAtLeast(dp(10))
         homeUserHeader.layoutParams = params
+        // A barra lateral precisa saber até onde o cabeçalho desce, senão a
+        // primeira aba (ex.: DORAMAS) nasce embaixo dele -- reservado um
+        // respiro extra (16dp) abaixo da borda do cabeçalho.
+        if (::homeSidebarTabs.isInitialized) {
+            homeSidebarTabs.setTopInset(params.topMargin + params.height + dp(16))
+        }
     }
 
     private fun showProfileDialog() {
