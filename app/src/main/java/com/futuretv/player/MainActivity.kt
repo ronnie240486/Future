@@ -4722,8 +4722,8 @@ class MainActivity : Activity() {
         remoteConfig = config
         brandMark.text = "FUTURE"
         brandSubtitle.text = "TV PLAYER"
-        appLogo.setImageResource(R.drawable.future_logo)
-        if (config.backgroundUrl.isNotBlank()) imageLoader.load(config.backgroundUrl, remoteBackground, R.drawable.future_logo)
+        appLogo.setImageResource(R.drawable.future_logo_safe)
+        if (config.backgroundUrl.isNotBlank()) imageLoader.load(config.backgroundUrl, remoteBackground, R.drawable.future_logo_safe)
         if (config.bannerUrl.isNotBlank()) remoteBannerUrl = config.bannerUrl
         if (config.epgUrl.isNotBlank()) remoteEpgUrl = config.epgUrl
         if (config.dnsUrl.isNotBlank() || config.serverApiUrl.isNotBlank() || config.testApiUrl.isNotBlank()) {
