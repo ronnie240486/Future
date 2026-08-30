@@ -3435,7 +3435,11 @@ class MainActivity : Activity() {
     private fun startTrailerPreview(entry: CatalogEntry, revealImmediately: Boolean = true) {
         if (entry.kind != MediaKind.MOVIE && entry.kind != MediaKind.SERIES) return
         val knownTrailer = entry.trailerUrl.trim().ifBlank { enrichedMetadata[entry.key]?.trailer.orEmpty().trim() }
-        videoPreview.visibility = if (revealImmediately) View.VISIBLE else View.INVISIBLE
+        // videoPreview fica SEMPRE visível (mostrando a capa/heroImage por
+        // baixo) -- antes, quando revealImmediately=false, o container
+        // inteiro virava INVISIBLE durante os 5s de espera do trailer,
+        // deixando a tela vazia (sem capa nenhuma) até o trailer aparecer.
+        videoPreview.visibility = View.VISIBLE
         val trailer = knownTrailer
         if (trailer.isBlank()) {
             startYoutubeTrailerSearchPreview(entry)
@@ -3448,7 +3452,6 @@ class MainActivity : Activity() {
         }
         if (!revealImmediately) {
             miniTrailerView?.visibility = View.INVISIBLE
-            videoPreview.visibility = View.INVISIBLE
         }
     }
 
@@ -3463,6 +3466,18 @@ class MainActivity : Activity() {
         showPreviewScaleControl()
     }
 
+    // Chamado quando o WebView do trailer finalmente tem conteúdo visível de
+    // verdade (não só "carregando"). Só aí faz sentido esconder a capa --
+    // durante a espera (revealImmediately=false, controlado por
+    // scheduleTrailerPreview) o trailer fica com visibility=INVISIBLE e
+    // ainda não deve substituir a capa; revealTrailerPreview() cuida disso
+    // quando os 5s passarem.
+    private fun hideHeroWhenTrailerReady(entry: CatalogEntry) {
+        if (previewMode == PreviewMode.TRAILER && miniPlayerEntryKey == entry.key && miniTrailerView?.visibility != View.INVISIBLE) {
+            heroImage.visibility = View.GONE
+        }
+    }
+
     private fun startVODTrailerWebView(entry: CatalogEntry, url: String) {
         stopMiniPlayer()
         val webView = createYoutubeWebView()
@@ -3470,6 +3485,7 @@ class MainActivity : Activity() {
             override fun onPageFinished(view: WebView?, pageUrl: String?) {
                 super.onPageFinished(view, pageUrl)
                 view?.alpha = 1f
+                hideHeroWhenTrailerReady(entry)
             }
         }
         registerTrailerView(entry, webView)
@@ -3492,6 +3508,7 @@ class MainActivity : Activity() {
                 if (!resolved && videoId != null) {
                     resolved = true
                     view.alpha = 1f
+                    hideHeroWhenTrailerReady(entry)
                     loadYoutubeVideoPage(view, videoId)
                 } else if (attempt < 10) {
                     view.postDelayed({ resolveFirstResult(view, attempt + 1) }, 700L)
@@ -3639,8 +3656,12 @@ class MainActivity : Activity() {
         previewMode = PreviewMode.TRAILER
         previewScale = PreviewScale.STRETCH
         showPreviewScaleControl()
-        heroImage.visibility = View.GONE
-        previewLogo.visibility = View.GONE
+        // Não esconde a capa (heroImage) aqui -- o WebView do trailer ainda
+        // está em branco/carregando nesse momento (alpha 0 ou página vazia).
+        // Escondê-la agora deixava a tela sem NADA por alguns segundos até o
+        // trailer aparecer de verdade. A capa só some quando o trailer fica
+        // visualmente pronto (ver os pontos com "heroImage.visibility = GONE"
+        // logo após cada WebView carregar o conteúdo), ou em revealTrailerPreview.
         liveBadge.visibility = View.VISIBLE
         liveBadge.text = "TRAILER"
         videoPreviewText.text = if (entry.kind == MediaKind.SERIES) {
@@ -3662,7 +3683,11 @@ class MainActivity : Activity() {
         webView.webViewClient = object : WebViewClient() {
             override fun onPageFinished(view: WebView?, url: String?) {
                 super.onPageFinished(view, url)
-                if (view != null && url?.contains("youtube", true) == true) view.postDelayed({ hideYoutubeChrome(view); if (trailerAudioEnabled()) enableYoutubeAudio(view) }, 1_000L)
+                if (view != null && url?.contains("youtube", true) == true) view.postDelayed({
+                    hideYoutubeChrome(view)
+                    if (trailerAudioEnabled()) enableYoutubeAudio(view)
+                    hideHeroWhenTrailerReady(entry)
+                }, 1_000L)
             }
         }
         loadYoutubeVideoPage(webView, videoId)
