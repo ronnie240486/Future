@@ -1777,12 +1777,16 @@ class MainActivity : Activity() {
         val params = homeUserHeader.layoutParams as? FrameLayout.LayoutParams ?: return
         // Cabeçalho compacto no canto superior esquerdo. A largura agora cobre
         // avatar, nome, relógio e data sem cortar os últimos dígitos.
-        params.width = (width * 0.22f).toInt().coerceAtLeast(dp(250))
-        // A área clicável termina antes da primeira aba; assim clicar em
-        // NOVELAS nunca pode acionar o perfil por sobreposição.
-        params.height = (height * 0.09f).toInt()
-        params.leftMargin = (width * 0.008f).toInt().coerceAtLeast(dp(6))
-        params.topMargin = (height * 0.015f).toInt()
+        params.width = (width * 0.24f).toInt().coerceAtLeast(dp(270))
+        // Altura aumentada pra caber o avatar maior (64dp) + nome do perfil
+        // embaixo dele sem cortar nada. A área clicável termina antes da
+        // primeira aba; assim clicar em NOVELAS nunca pode acionar o perfil
+        // por sobreposição.
+        params.height = (height * 0.115f).toInt().coerceAtLeast(dp(118))
+        // Margem maior pra não colar na borda arredondada do painel branco
+        // da barra lateral, que cortava visualmente o avatar.
+        params.leftMargin = (width * 0.014f).toInt().coerceAtLeast(dp(14))
+        params.topMargin = (height * 0.018f).toInt().coerceAtLeast(dp(10))
         homeUserHeader.layoutParams = params
     }
 
