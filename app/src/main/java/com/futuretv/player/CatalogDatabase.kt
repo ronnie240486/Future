@@ -244,6 +244,35 @@ class CatalogDatabase(context: Context) {
     fun first(kind: MediaKind?, group: String, search: String, hidden: Set<String>, favorites: Set<String>, sortMode: SortMode): CatalogEntry? =
         queryPage(kind, group, search, hidden, favorites, sortMode, 1, 0).firstOrNull()
 
+    // Diagnostico READ-ONLY (nao muda nenhum comportamento real do app):
+    // compara quantos EPISODIOS brutos existem numa categoria de serie
+    // contra quantas IDENTIDADES distintas o agrupamento (series_group ou
+    // nome, ver querySeriesPageGrouped) enxerga ali. Se uma categoria tem
+    // dezenas de episodios mas so 1 identidade, isso confirma ao vivo (sem
+    // adivinhar) que o agrupamento esta colapsando series diferentes numa
+    // so -- e mostra ATE 5 valores de identidade reais pra eu conseguir ver
+    // o formato exato do titulo que esta confundindo a heuristica.
+    fun seriesGroupingDebug(group: String, hidden: Set<String>, includeAdult: Boolean): String {
+        val db = helper.readableDatabase
+        val (whereSql, args) = seriesFilter("t", group, "", hidden, includeAdult)
+        val rawCount = db.rawQuery("SELECT COUNT(*) FROM $TABLE t WHERE $whereSql", args.toTypedArray()).use {
+            if (it.moveToFirst()) it.getInt(0) else 0
+        }
+        val identityExpr = "LOWER(TRIM(CASE WHEN TRIM(t.series_group) <> '' THEN t.series_group ELSE t.name END))"
+        val identityCount = db.rawQuery("SELECT COUNT(DISTINCT $identityExpr) FROM $TABLE t WHERE $whereSql", args.toTypedArray()).use {
+            if (it.moveToFirst()) it.getInt(0) else 0
+        }
+        val samples = db.rawQuery(
+            "SELECT $identityExpr AS ident, COUNT(*) AS n FROM $TABLE t WHERE $whereSql GROUP BY ident ORDER BY n DESC LIMIT 5",
+            args.toTypedArray(),
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add("\"${cursor.getString(0)}\" (${cursor.getInt(1)} itens)")
+            }
+        }
+        return "\"$group\": $rawCount episódio(s) bruto(s) → $identityCount identidade(s) distinta(s).\nTop identidades: ${samples.joinToString(" | ")}"
+    }
+
     // "Mais recente" aqui é uma aproximação pela ordem de inserção (rowid),
     // já que o M3U/Xtream importado não carrega uma data real de quando o
     // item foi adicionado ao catálogo do provedor.

@@ -32,6 +32,16 @@ data class TmdbRating(
     val voteCount: Int,
 )
 
+// Estrutura COMPLETA de temporadas/episódios de uma série, buscada direto
+// da API Xtream (get_series_info) em vez do catálogo local (SQLite) --
+// necessário porque o M3U importado costuma trazer só 1 linha por série
+// (o episódio mais recente), então o banco local nunca teria as
+// temporadas antigas pra começo de conversa.
+data class SeriesStructure(
+    val seasons: List<String>,
+    val episodesBySeason: Map<String, List<CatalogEntry>>,
+)
+
 class PlaylistRepository(private val context: Context) {
 
     private data class XtreamSource(val baseUrl: String, val username: String, val password: String)
@@ -46,6 +56,7 @@ class PlaylistRepository(private val context: Context) {
     // por tipo, dentro do executor single-thread desta classe.
     private val idLookupCache = mutableMapOf<MediaKind, Map<String, String>>()
     private val episodeDetailsCache = mutableMapOf<String, Map<String, EpisodeDetail>>()
+    private val seriesStructureCache = mutableMapOf<String, SeriesStructure>()
     private val tmdbRatingCache = mutableMapOf<String, TmdbRating?>()
 
     companion object {
@@ -201,6 +212,11 @@ class PlaylistRepository(private val context: Context) {
 
     fun queryGroups(kind: MediaKind, hidden: Set<String>, includeAdult: Boolean = false, callback: (List<String>) -> Unit) {
         executor.execute { callback(runCatching { database.groups(kind, hidden, includeAdult) }.getOrDefault(emptyList())) }
+    }
+
+    // Diagnostico READ-ONLY, ver CatalogDatabase.seriesGroupingDebug.
+    fun seriesGroupingDebug(group: String, hidden: Set<String>, includeAdult: Boolean, callback: (String) -> Unit) {
+        executor.execute { callback(runCatching { database.seriesGroupingDebug(group, hidden, includeAdult) }.getOrDefault("erro ao rodar diagnostico")) }
     }
 
     fun mostRecent(kind: MediaKind, hidden: Set<String>, callback: (CatalogEntry?) -> Unit) {
@@ -457,15 +473,18 @@ class PlaylistRepository(private val context: Context) {
         }
     }
 
-    private fun fetchEpisodeDetailsInternal(entry: CatalogEntry): Map<String, EpisodeDetail> {
-        val source = xtreamSource ?: parseXtreamSource(entry.streamUrl) ?: return emptyMap()
+    private fun fetchSeriesInfoJson(entry: CatalogEntry): JSONObject? {
+        val source = xtreamSource ?: parseXtreamSource(entry.streamUrl) ?: return null
         val directId = entry.tvgId.filter(Char::isDigit).ifBlank { extractProviderId(entry.streamUrl) }
-        val root = directId.takeIf { it.isNotBlank() }
+        return directId.takeIf { it.isNotBlank() }
             ?.let { requestJson(xtreamEndpoint(source, "get_series_info", "series_id", it)) }
             ?.takeIf { it.optJSONObject("episodes") != null }
             ?: resolveProviderId(source, entry).takeIf { it.isNotBlank() && it != directId }
                 ?.let { requestJson(xtreamEndpoint(source, "get_series_info", "series_id", it)) }
-            ?: return emptyMap()
+    }
+
+    private fun fetchEpisodeDetailsInternal(entry: CatalogEntry): Map<String, EpisodeDetail> {
+        val root = fetchSeriesInfoJson(entry) ?: return emptyMap()
         val episodesObj = root.optJSONObject("episodes") ?: return emptyMap()
         val result = mutableMapOf<String, EpisodeDetail>()
         episodesObj.keys().forEach { seasonKey ->
@@ -481,6 +500,75 @@ class PlaylistRepository(private val context: Context) {
         }
         return result
     }
+
+    // O M3U/playlist importado costuma trazer só UMA linha por série (em
+    // geral o episódio mais recente) -- é assim que o painel Xtream expõe
+    // "VOD séries" na lista M3U pra não deixar o arquivo gigante. O
+    // catálogo local (SQLite) então só enxerga esse único episódio, e
+    // "temporadas" vira sempre "só a última, com 1 episódio", nunca importa
+    // quantas temporadas a série realmente tem. A lista COMPLETA de
+    // temporadas/episódios só existe do lado do provedor, via
+    // get_series_info (o mesmo endpoint já usado pra sinopse/imagem por
+    // episódio acima) -- esta função monta entradas reproduzíveis
+    // (com URL de stream real) direto da resposta dessa API, pra a tela de
+    // temporadas usar como fonte de verdade em vez do catálogo local
+    // incompleto.
+    fun fetchSeriesStructure(entry: CatalogEntry, callback: (SeriesStructure?) -> Unit) {
+        val cacheKey = entry.seriesGroup.ifBlank { entry.name }
+        seriesStructureCache[cacheKey]?.let { callback(it); return }
+        metadataExecutor.execute {
+            val result = runCatching { fetchSeriesStructureInternal(entry) }.getOrNull()
+            if (result != null) seriesStructureCache[cacheKey] = result
+            callback(result)
+        }
+    }
+
+    private fun fetchSeriesStructureInternal(entry: CatalogEntry): SeriesStructure? {
+        val source = xtreamSource ?: parseXtreamSource(entry.streamUrl) ?: return null
+        val root = fetchSeriesInfoJson(entry) ?: return null
+        val episodesObj = root.optJSONObject("episodes") ?: return null
+        val showIdentity = entry.seriesGroup.ifBlank { entry.name }
+        val bySeason = linkedMapOf<String, List<CatalogEntry>>()
+        episodesObj.keys().forEach { seasonKey ->
+            val array = episodesObj.optJSONArray(seasonKey) ?: return@forEach
+            val seasonNumber = seasonKey.trim().trimStart('0').ifBlank { "0" }
+            val list = mutableListOf<CatalogEntry>()
+            for (i in 0 until array.length()) {
+                val ep = array.optJSONObject(i) ?: continue
+                val episodeId = ep.optString("id").ifBlank { ep.optString("episode_id") }
+                if (episodeId.isBlank()) continue
+                val ext = ep.optString("container_extension").ifBlank { "mp4" }
+                val epNum = ep.optString("episode_num").ifBlank { (i + 1).toString() }
+                val info = ep.optJSONObject("info")
+                val rawTitle = ep.optString("title")
+                val image = info?.let { firstJsonText(it, "movie_image", "cover_big", "cover") }.orEmpty()
+                val plot = info?.let { firstJsonText(it, "plot", "description", "overview") }.orEmpty()
+                val streamUrl = "${source.baseUrl}/series/${encodePathSegment(source.username)}/${encodePathSegment(source.password)}/$episodeId.$ext"
+                list += CatalogEntry(
+                    key = "xtream-episode|$episodeId",
+                    name = rawTitle.ifBlank { "$showIdentity E$epNum" },
+                    groupTitle = entry.groupTitle,
+                    tvgId = episodeId,
+                    logoUrl = image,
+                    streamUrl = streamUrl,
+                    kind = MediaKind.SERIES,
+                    quality = entry.quality,
+                    seriesGroup = showIdentity,
+                    season = seasonNumber,
+                    episode = epNum,
+                    synopsis = plot,
+                )
+            }
+            if (list.isNotEmpty()) {
+                bySeason[seasonNumber] = list.sortedBy { it.episode.toIntOrNull() ?: Int.MAX_VALUE }
+            }
+        }
+        if (bySeason.isEmpty()) return null
+        val seasons = bySeason.keys.sortedBy { it.toIntOrNull() ?: 0 }
+        return SeriesStructure(seasons, bySeason)
+    }
+
+    private fun encodePathSegment(value: String): String = Uri.encode(value)
 
     // Busca a nota (media de votos) no TMDB pelo nome do filme/serie. Cache em
     // memoria por nome normalizado, ja que o TMDB nao faz parte do catalogo

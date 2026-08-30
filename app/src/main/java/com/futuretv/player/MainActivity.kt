@@ -397,6 +397,26 @@ class MainActivity : Activity() {
         sortRecentButton.setOnClickListener { applySortMode(SortMode.RECENT) }
         sortAlphaButton.setOnClickListener { applySortMode(SortMode.ALPHABETICAL) }
         sortRatingButton.setOnClickListener { applySortMode(SortMode.RATING) }
+        // DIAGNOSTICO TEMPORARIO (nao afeta o catalogo real, so LE o banco):
+        // segurar o botao "NOTA" numa categoria de série mostra quantos
+        // episódios brutos existem ali vs quantas "identidades" o
+        // agrupamento por série enxerga -- pra confirmar com números reais
+        // se uma categoria (ex.: Discovery, ReelShorts) está tendo shows
+        // diferentes colapsados numa única identidade.
+        sortRatingButton.setOnLongClickListener {
+            if (currentKind == MediaKind.SERIES && databaseBackedCatalog) {
+                repository.seriesGroupingDebug(selectedCategory, hiddenGroups(), parentalUnlocked) { message ->
+                    runOnUiThread {
+                        AlertDialog.Builder(this)
+                            .setTitle("Diagnóstico de agrupamento")
+                            .setMessage(message)
+                            .setPositiveButton("OK", null)
+                            .show()
+                    }
+                }
+            }
+            true
+        }
         paintSortButtons()
         navItems = findViewById(R.id.navItems)
         searchHint = findViewById(R.id.searchHint)
@@ -4279,6 +4299,12 @@ class MainActivity : Activity() {
 
         var episodeDetails: Map<String, EpisodeDetail> = emptyMap()
         var currentSeason: String? = null
+        // Quando a API do Xtream responde com a estrutura completa da série
+        // (todas as temporadas/episódios reais), ela vira a fonte de
+        // verdade em vez do catálogo local -- o M3U importado geralmente só
+        // tem 1 linha por série (o episódio mais recente), então o banco
+        // local sozinho nunca teria temporadas antigas pra mostrar.
+        var xtreamStructure: SeriesStructure? = null
 
         fun episodeDetailFor(episode: CatalogEntry): EpisodeDetail? {
             val s = episode.season.ifBlank { "1" }.toIntOrNull()?.toString() ?: episode.season.ifBlank { "1" }
@@ -4344,6 +4370,11 @@ class MainActivity : Activity() {
             currentSeason = season
             episodeList.removeAllViews()
             episodeList.addView(dialogMessage("Carregando episódios..."))
+            val fromXtream = xtreamStructure?.episodesBySeason?.get(season)
+            if (fromXtream != null) {
+                renderEpisodes(fromXtream)
+                return
+            }
             if (databaseBackedCatalog) {
                 repository.querySeriesEpisodes(showTitle, season, selectedCategory, hiddenGroups(), includeAdult = parentalUnlocked) { episodes ->
                     runOnUiThread { if (currentSeason == season) renderEpisodes(episodes) }
@@ -4391,9 +4422,24 @@ class MainActivity : Activity() {
         }
 
         if (databaseBackedCatalog) {
-            repository.querySeriesSeasons(showTitle, selectedCategory, hiddenGroups(), includeAdult = parentalUnlocked) { seasons -> runOnUiThread { renderSeasons(seasons) } }
+            repository.querySeriesSeasons(showTitle, selectedCategory, hiddenGroups(), includeAdult = parentalUnlocked) { localSeasons ->
+                runOnUiThread { renderSeasons(localSeasons) }
+            }
         } else {
             renderSeasons(currentItems().filter { it.kind == MediaKind.SERIES && seriesTitle(it) == showTitle }.map { it.season.ifBlank { "1" } }.distinct().sortedBy { it.toIntOrNull() ?: 1 })
+        }
+        // Busca em paralelo a estrutura REAL (todas as temporadas) via API do
+        // Xtream. Se vier com MAIS temporadas do que o catálogo local
+        // encontrou, substitui a lista renderizada -- cobre o caso comum de
+        // o M3U só ter trazido o episódio mais recente pra essa série.
+        repository.fetchSeriesStructure(entry) { structure ->
+            runOnUiThread {
+                if (seriesSeasonsDialog !== dialog || structure == null) return@runOnUiThread
+                if (structure.seasons.size > seasonList.childCount) {
+                    xtreamStructure = structure
+                    renderSeasons(structure.seasons)
+                }
+            }
         }
 
         repository.fetchSeriesEpisodeDetails(entry) { details ->
