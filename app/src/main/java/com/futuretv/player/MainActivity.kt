@@ -833,19 +833,22 @@ class MainActivity : Activity() {
     // que ficava errada pra qualquer bolha que não estivesse alinhada
     // exatamente acima/abaixo/ao lado do centro.
     private fun moveOrbitDpad(focused: View, keyCode: Int): Boolean {
-        // ESQUERDA é tratada à parte, sem geometria: sempre sai direto pra
-        // barra lateral, de qualquer bolha/satélite/centro -- é a convenção
-        // padrão de TV (esquerda sempre alcança o menu), e depender de
-        // geometria aqui falhava quando havia satélites próximos "roubando"
-        // o destino antes de chegar na borda esquerda da órbita.
-        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return focusNavigationForCurrentSection()
         val from = orbitPositions[focused] ?: return false
         val (dx, dy) = when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> -1f to 0f
             KeyEvent.KEYCODE_DPAD_RIGHT -> 1f to 0f
             KeyEvent.KEYCODE_DPAD_UP -> 0f to -1f
             KeyEvent.KEYCODE_DPAD_DOWN -> 0f to 1f
             else -> return false
         }
+        // Pra ESQUERDA, exige alinhamento razoável na mesma "faixa"
+        // horizontal (tolerância menor) -- numa órbita em círculo completo,
+        // qualquer bolha tem ALGUMA outra do lado oposto do círculo que
+        // tecnicamente está "mais à esquerda" (x menor), mas bem longe
+        // verticalmente; sem essa tolerância, esquerda ficava dando a volta
+        // inteira no círculo em vez de sair pra barra lateral ao chegar na
+        // borda esquerda de verdade.
+        val maxPerp = if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) dp(70).toFloat() else Float.MAX_VALUE
         var best: View? = null
         var bestScore = Float.MAX_VALUE
         for ((view, point) in orbitPositions) {
@@ -855,11 +858,15 @@ class MainActivity : Activity() {
             val along = vx * dx + vy * dy
             if (along <= dp(4)) continue
             val perp = kotlin.math.abs(vx * dy - vy * dx)
+            if (perp > maxPerp) continue
             val score = along + perp * 2.2f
             if (score < bestScore) {
                 bestScore = score
                 best = view
             }
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && best == null) {
+            return focusNavigationForCurrentSection()
         }
         return best?.requestFocus() ?: false
     }
