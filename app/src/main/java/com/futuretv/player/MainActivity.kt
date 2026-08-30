@@ -833,16 +833,20 @@ class MainActivity : Activity() {
     // que ficava errada pra qualquer bolha que não estivesse alinhada
     // exatamente acima/abaixo/ao lado do centro.
     private fun moveOrbitDpad(focused: View, keyCode: Int): Boolean {
+        // ESQUERDA é tratada à parte, sem geometria: sempre sai direto pra
+        // barra lateral, de qualquer bolha/satélite/centro -- é a convenção
+        // padrão de TV (esquerda sempre alcança o menu), e depender de
+        // geometria aqui falhava quando havia satélites próximos "roubando"
+        // o destino antes de chegar na borda esquerda da órbita.
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return focusNavigationForCurrentSection()
         val from = orbitPositions[focused] ?: return false
         val (dx, dy) = when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT -> -1f to 0f
             KeyEvent.KEYCODE_DPAD_RIGHT -> 1f to 0f
             KeyEvent.KEYCODE_DPAD_UP -> 0f to -1f
             KeyEvent.KEYCODE_DPAD_DOWN -> 0f to 1f
             else -> return false
         }
         var best: View? = null
-        var bestPerp = 0f
         var bestScore = Float.MAX_VALUE
         for ((view, point) in orbitPositions) {
             if (view === focused) continue
@@ -855,14 +859,7 @@ class MainActivity : Activity() {
             if (score < bestScore) {
                 bestScore = score
                 best = view
-                bestPerp = perp
             }
-        }
-        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && (best == null || bestPerp > dp(90))) {
-            // Nada claramente à esquerda (ou o mais próximo está bem mais
-            // "de lado" que "à esquerda") -- sai pra barra lateral, que é a
-            // convenção esperada numa TV: esquerda sempre alcança o menu.
-            return focusNavigationForCurrentSection()
         }
         return best?.requestFocus() ?: false
     }
