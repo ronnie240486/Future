@@ -72,17 +72,6 @@ class OrbitLinesView(context: Context, attrs: AttributeSet? = null) : View(conte
     override fun onDraw(canvas: Canvas) {
         super.onDraw(canvas)
         val c = center ?: return
-        val radius = min(width, height) * 0.43f
-
-        canvas.drawOval(
-            RectF(c.x - radius * 0.94f, c.y - radius * 0.44f, c.x + radius * 0.94f, c.y + radius * 0.44f),
-            ringPaint,
-        )
-        canvas.drawOval(
-            RectF(c.x - radius * 0.58f, c.y - radius * 0.88f, c.x + radius * 0.58f, c.y + radius * 0.88f),
-            ringPaint,
-        )
-        canvas.drawCircle(c.x, c.y, radius * 0.64f, ringPaint)
 
         points.forEachIndexed { index, point ->
             drawCurvedLink(canvas, c, point, if (index % 3 == 0) accentLinePaint else linePaint, 30f * if (index % 2 == 0) 1f else -1f)
