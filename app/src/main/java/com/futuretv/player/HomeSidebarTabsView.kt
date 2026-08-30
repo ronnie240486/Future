@@ -25,14 +25,6 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
         layoutParams = LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.MATCH_PARENT)
     }
 
-    // Espaço reservado no topo pra não deixar a primeira aba (ex.: DORAMAS)
-    // nascer embaixo do cabeçalho de perfil, que flutua por cima da barra
-    // lateral. Ajustado de fora (MainActivity) com a altura real do
-    // cabeçalho, já que essa view não sabe por si só o tamanho dele.
-    fun setTopInset(px: Int) {
-        content.setPadding(content.paddingLeft, px, content.paddingRight, content.paddingBottom)
-    }
-
     private val content = LinearLayout(context).apply {
         orientation = LinearLayout.VERTICAL
         gravity = Gravity.TOP
@@ -129,8 +121,11 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
         super.onSizeChanged(width, height, oldWidth, oldHeight)
         if (width <= 0 || height <= 0) return
         // A posição corresponde à referência: cabeçalho no topo e as cinco
-        // cápsulas começam abaixo dele, dentro do painel branco.
-        val top = (height * 0.14f).toInt()
+        // cápsulas começam abaixo dele, dentro do painel branco. O
+        // cabeçalho (avatar 64dp + nome do perfil embaixo) ocupa bem mais
+        // espaço que antes -- 14% deixava a primeira cápsula (ex.: DORAMAS)
+        // nascer embaixo do texto do nome do perfil, sobrepondo os dois.
+        val top = (height * 0.205f).toInt()
         val rowHeight = (height * 0.14f).toInt()
         lastRowHeight = rowHeight
         val gap = (height * 0.025f).toInt()
