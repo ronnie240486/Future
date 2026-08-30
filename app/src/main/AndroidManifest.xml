@@ -11,7 +11,7 @@
         android:icon="@mipmap/ic_launcher"
         android:roundIcon="@mipmap/ic_launcher"
         android:usesCleartextTraffic="true"
-        android:banner="@drawable/future_banner"
+        android:banner="@drawable/future_logo_safe"
         android:label="FUTURE"
         android:supportsRtl="true"
         android:theme="@style/Theme.FutureTvPlayer">

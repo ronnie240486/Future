@@ -41,7 +41,7 @@
                 android:layout_marginBottom="4dp"
                 android:contentDescription="@null"
                 android:scaleType="centerInside"
-                android:src="@drawable/future_logo"
+                android:src="@drawable/future_logo_safe"
                 android:visibility="gone" />
 
             <TextView
