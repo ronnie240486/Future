@@ -32,15 +32,56 @@ data class TmdbRating(
     val voteCount: Int,
 )
 
-// Estrutura COMPLETA de temporadas/episódios de uma série, buscada direto
-// da API Xtream (get_series_info) em vez do catálogo local (SQLite) --
-// necessário porque o M3U importado costuma trazer só 1 linha por série
-// (o episódio mais recente), então o banco local nunca teria as
-// temporadas antigas pra começo de conversa.
-data class SeriesStructure(
+// Estrutura de temporadas de uma série, buscada direto da API Xtream
+// (get_series_info) em vez do catálogo local (SQLite) -- necessário porque
+// o M3U importado costuma trazer só 1 linha por série (o episódio mais
+// recente), então o banco local nunca teria as temporadas antigas pra
+// começo de conversa.
+//
+// Guarda só o JSON BRUTO de cada temporada (não converte pra CatalogEntry
+// aqui) -- séries longas (ex.: um reality de 16 temporadas, centenas de
+// episódios) fariam isso consumir memória à toa numa TV box mais fraca se
+// convertêssemos TODAS as temporadas de uma vez só. episodesFor() converte
+// sob demanda, só a temporada que o usuário realmente abrir.
+class SeriesStructure(
     val seasons: List<String>,
-    val episodesBySeason: Map<String, List<CatalogEntry>>,
-)
+    private val episodesJsonBySeason: Map<String, JSONArray>,
+    private val streamUrlPrefix: String,
+    private val showIdentity: String,
+    private val groupTitle: String,
+    private val quality: String,
+) {
+    fun episodesFor(season: String): List<CatalogEntry> {
+        val array = episodesJsonBySeason[season] ?: return emptyList()
+        val list = mutableListOf<CatalogEntry>()
+        for (i in 0 until array.length()) {
+            val ep = array.optJSONObject(i) ?: continue
+            val episodeId = ep.optString("id").ifBlank { ep.optString("episode_id") }
+            if (episodeId.isBlank()) continue
+            val ext = ep.optString("container_extension").ifBlank { "mp4" }
+            val epNum = ep.optString("episode_num").ifBlank { (i + 1).toString() }
+            val info = ep.optJSONObject("info")
+            val rawTitle = ep.optString("title")
+            val image = info?.optString("movie_image").orEmpty().ifBlank { info?.optString("cover_big").orEmpty() }.ifBlank { info?.optString("cover").orEmpty() }
+            val plot = info?.optString("plot").orEmpty().ifBlank { info?.optString("description").orEmpty() }.ifBlank { info?.optString("overview").orEmpty() }
+            list += CatalogEntry(
+                key = "xtream-episode|$episodeId",
+                name = rawTitle.ifBlank { "$showIdentity E$epNum" },
+                groupTitle = groupTitle,
+                tvgId = episodeId,
+                logoUrl = image,
+                streamUrl = "$streamUrlPrefix$episodeId.$ext",
+                kind = MediaKind.SERIES,
+                quality = quality,
+                seriesGroup = showIdentity,
+                season = season,
+                episode = epNum,
+                synopsis = plot,
+            )
+        }
+        return list.sortedBy { it.episode.toIntOrNull() ?: Int.MAX_VALUE }
+    }
+}
 
 class PlaylistRepository(private val context: Context) {
 
@@ -523,49 +564,35 @@ class PlaylistRepository(private val context: Context) {
         }
     }
 
+    // Converte só a temporada pedida (sob demanda) em CatalogEntry
+    // reproduzíveis. Ver comentário na classe SeriesStructure.
+    fun episodesForSeason(structure: SeriesStructure, season: String, callback: (List<CatalogEntry>) -> Unit) {
+        metadataExecutor.execute {
+            callback(runCatching { structure.episodesFor(season) }.getOrDefault(emptyList()))
+        }
+    }
+
     private fun fetchSeriesStructureInternal(entry: CatalogEntry): SeriesStructure? {
         val source = xtreamSource ?: parseXtreamSource(entry.streamUrl) ?: return null
         val root = fetchSeriesInfoJson(entry) ?: return null
         val episodesObj = root.optJSONObject("episodes") ?: return null
-        val showIdentity = entry.seriesGroup.ifBlank { entry.name }
-        val bySeason = linkedMapOf<String, List<CatalogEntry>>()
+        val bySeason = linkedMapOf<String, JSONArray>()
         episodesObj.keys().forEach { seasonKey ->
             val array = episodesObj.optJSONArray(seasonKey) ?: return@forEach
+            if (array.length() == 0) return@forEach
             val seasonNumber = seasonKey.trim().trimStart('0').ifBlank { "0" }
-            val list = mutableListOf<CatalogEntry>()
-            for (i in 0 until array.length()) {
-                val ep = array.optJSONObject(i) ?: continue
-                val episodeId = ep.optString("id").ifBlank { ep.optString("episode_id") }
-                if (episodeId.isBlank()) continue
-                val ext = ep.optString("container_extension").ifBlank { "mp4" }
-                val epNum = ep.optString("episode_num").ifBlank { (i + 1).toString() }
-                val info = ep.optJSONObject("info")
-                val rawTitle = ep.optString("title")
-                val image = info?.let { firstJsonText(it, "movie_image", "cover_big", "cover") }.orEmpty()
-                val plot = info?.let { firstJsonText(it, "plot", "description", "overview") }.orEmpty()
-                val streamUrl = "${source.baseUrl}/series/${encodePathSegment(source.username)}/${encodePathSegment(source.password)}/$episodeId.$ext"
-                list += CatalogEntry(
-                    key = "xtream-episode|$episodeId",
-                    name = rawTitle.ifBlank { "$showIdentity E$epNum" },
-                    groupTitle = entry.groupTitle,
-                    tvgId = episodeId,
-                    logoUrl = image,
-                    streamUrl = streamUrl,
-                    kind = MediaKind.SERIES,
-                    quality = entry.quality,
-                    seriesGroup = showIdentity,
-                    season = seasonNumber,
-                    episode = epNum,
-                    synopsis = plot,
-                )
-            }
-            if (list.isNotEmpty()) {
-                bySeason[seasonNumber] = list.sortedBy { it.episode.toIntOrNull() ?: Int.MAX_VALUE }
-            }
+            bySeason[seasonNumber] = array
         }
         if (bySeason.isEmpty()) return null
-        val seasons = bySeason.keys.sortedBy { it.toIntOrNull() ?: 0 }
-        return SeriesStructure(seasons, bySeason)
+        val streamUrlPrefix = "${source.baseUrl}/series/${encodePathSegment(source.username)}/${encodePathSegment(source.password)}/"
+        return SeriesStructure(
+            seasons = bySeason.keys.sortedBy { it.toIntOrNull() ?: 0 },
+            episodesJsonBySeason = bySeason,
+            streamUrlPrefix = streamUrlPrefix,
+            showIdentity = entry.seriesGroup.ifBlank { entry.name },
+            groupTitle = entry.groupTitle,
+            quality = entry.quality,
+        )
     }
 
     private fun encodePathSegment(value: String): String = Uri.encode(value)

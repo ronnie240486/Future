@@ -4343,7 +4343,14 @@ class MainActivity : Activity() {
                 episodeList.addView(dialogMessage("Nenhum episódio encontrado nesta temporada."))
                 return
             }
-            episodes.forEach { episode ->
+            // Limita a quantidade de views/imagens montadas de uma vez --
+            // novelas diárias ou reality shows longos podem ter uma
+            // temporada com centenas de episódios. Montar tudo (view +
+            // carregamento de imagem) de uma vez trava a thread principal
+            // por tempo demais em hardware fraco (TV box), o que o sistema
+            // pode interpretar como app travado e fechar sozinho.
+            val capped = episodes.take(300)
+            capped.forEach { episode ->
                 val detail = episodeDetailFor(episode)
                 val code = episode.episode.takeIf { it.isNotBlank() }?.let { "E${it.padStart(2, '0')}" } ?: "EP"
                 val episodeTitle = episode.name.removePrefix("$showTitle ").trim().ifBlank { episode.name }
@@ -4389,15 +4396,20 @@ class MainActivity : Activity() {
                 episodeList.addView(card)
                 imageLoader.load(detail?.image.orEmpty().ifBlank { episode.logoUrl }, thumb, fallbackLogo(episode))
             }
+            if (episodes.size > capped.size) {
+                episodeList.addView(dialogMessage("+ ${episodes.size - capped.size} episódios não exibidos (temporada muito longa)."))
+            }
         }
 
         fun loadSeason(season: String) {
             currentSeason = season
             episodeList.removeAllViews()
             episodeList.addView(dialogMessage("Carregando episódios..."))
-            val fromXtream = xtreamStructure?.episodesBySeason?.get(season)
-            if (fromXtream != null) {
-                renderEpisodes(fromXtream)
+            val structure = xtreamStructure
+            if (structure != null && season in structure.seasons) {
+                repository.episodesForSeason(structure, season) { episodes ->
+                    runOnUiThread { if (currentSeason == season) renderEpisodes(episodes) }
+                }
                 return
             }
             if (databaseBackedCatalog) {
