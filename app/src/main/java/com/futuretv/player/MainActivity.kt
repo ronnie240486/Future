@@ -4259,7 +4259,16 @@ class MainActivity : Activity() {
         val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK); addView(scroll) }
         val dialog = Dialog(this, android.R.style.Theme_Black_NoTitleBar_Fullscreen).apply { setContentView(root) }
         seriesSeasonsDialog = dialog
-        dialog.setOnDismissListener { if (seriesSeasonsDialog === dialog) seriesSeasonsDialog = null }
+        dialog.setOnDismissListener {
+            if (seriesSeasonsDialog === dialog) seriesSeasonsDialog = null
+            // Sem isso, o Android joga o foco pro primeiro item focável da
+            // tela ao fechar o diálogo (a view do card anterior pode ter
+            // sido reciclada enquanto o diálogo estava aberto por cima) --
+            // o que arrasta a lista inteira de volta pro topo mesmo quando
+            // o usuário estava vendo o último item. Restaura explicitamente
+            // o foco/posição no item que estava selecionado antes de abrir.
+            channelList.post { focusSelectedCatalogItem() }
+        }
         headerViews.backButton.setOnClickListener { dialog.dismiss() }
         dialog.setOnKeyListener { _, keyCode, event ->
             if (keyCode == KeyEvent.KEYCODE_BACK && event.action == KeyEvent.ACTION_UP) { dialog.dismiss(); true } else false
@@ -5912,7 +5921,12 @@ class MainActivity : Activity() {
         entry.name.contains("Discovery", true) -> R.drawable.discovery_logo
         entry.name.contains("National Geographic", true) -> R.drawable.national_geo_logo
         entry.name.contains("ESPN", true) -> R.drawable.espn_logo
-        else -> R.drawable.tv_banner
+        // Antes caía num retângulo cinza sem marca nenhuma enquanto a capa
+        // real ainda não tinha chegado (ou nunca chega, se o provedor não
+        // manda uma pra aquele item) -- todo o grid ficava com uma fileira
+        // de caixas cinzas até a rede responder. Usar o logo do app como
+        // placeholder deixa a espera com identidade visual em vez de vazia.
+        else -> R.drawable.future_logo_safe
     }
 
     private fun fallbackHero(entry: CatalogEntry): Int = when {
