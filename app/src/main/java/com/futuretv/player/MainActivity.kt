@@ -838,35 +838,23 @@ class MainActivity : Activity() {
     // que ficava errada pra qualquer bolha que não estivesse alinhada
     // exatamente acima/abaixo/ao lado do centro.
     private fun moveOrbitDpad(focused: View, keyCode: Int): Boolean {
-        // ESQUERDA sai do "nível" de satélite antes de qualquer outra
-        // coisa: se o foco está num satélite (iconezinho ao redor de uma
-        // bolha), esquerda volta pra bolha-mãe dele -- não considera os
-        // OUTROS satélites da mesma bolha como destino, porque alguns
-        // ficam fisicamente mais à esquerda que a própria bolha (ex.:
-        // Sonhos/Kids) e isso prendia o usuário pulando entre eles sem
-        // nunca sair pra barra lateral.
-        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
-            val parent = orbitSatelliteParents[focused]
-            if (parent != null) return parent.requestFocus()
-        }
+        // ESQUERDA: sempre sai direto pra barra lateral, sem exceção, de
+        // qualquer bolha, satélite ou centro. Chega de tentar ser "esperto"
+        // com geometria aqui -- toda vez que isso navegava pra outro
+        // elemento da órbita em vez de sair direto, ficava imprevisível.
+        // Esquerda agora só faz uma coisa, sempre.
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return focusNavigationForCurrentSection()
         val from = orbitPositions[focused] ?: return false
         val (dx, dy) = when (keyCode) {
-            KeyEvent.KEYCODE_DPAD_LEFT -> -1f to 0f
             KeyEvent.KEYCODE_DPAD_RIGHT -> 1f to 0f
             KeyEvent.KEYCODE_DPAD_UP -> 0f to -1f
             KeyEvent.KEYCODE_DPAD_DOWN -> 0f to 1f
             else -> return false
         }
-        // ESQUERDA a partir de uma BOLHA só considera outras bolhas (não
-        // satélites) como destino -- pelo mesmo motivo acima. Satélites só
-        // são alcançados indo pra direita/cima/baixo a partir da própria
-        // bolha-mãe.
-        val onlyBubbles = keyCode == KeyEvent.KEYCODE_DPAD_LEFT
         var best: View? = null
         var bestScore = Float.MAX_VALUE
         for ((view, point) in orbitPositions) {
             if (view === focused) continue
-            if (onlyBubbles && view !in orbitBubbles) continue
             val vx = point.x - from.x
             val vy = point.y - from.y
             val along = vx * dx + vy * dy

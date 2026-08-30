@@ -94,12 +94,16 @@ class HomeSidebarTabsView(context: Context) : FrameLayout(context) {
                 textScaleX = 0.70f
                 setTypeface(typeface, android.graphics.Typeface.BOLD)
                 gravity = Gravity.CENTER_VERTICAL
-                maxLines = 1
-                isSingleLine = true
-                ellipsize = android.text.TextUtils.TruncateAt.END
+                // Antes forçava 1 linha só e cortava com "..." quando o nome
+                // não cabia (ex.: "NOVELAS TURCAS" virava "NOVELAS TUR...").
+                // Agora quebra em até 2 linhas pra mostrar o nome completo
+                // sempre, em vez de cortar.
+                maxLines = 2
+                isSingleLine = false
+                ellipsize = null
                 includeFontPadding = false
                 letterSpacing = 0.005f
-                layoutParams = LinearLayout.LayoutParams(0, LayoutParams.MATCH_PARENT, 1f).apply {
+                layoutParams = LinearLayout.LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f).apply {
                     marginStart = dp(4)
                 }
             })
