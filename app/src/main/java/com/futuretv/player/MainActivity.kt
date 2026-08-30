@@ -139,6 +139,12 @@ class MainActivity : Activity() {
     private var orbitBubbles: List<View> = emptyList()
     private var orbitSatelliteGroups: List<List<View>> = emptyList()
     private var orbitSatelliteParents: Map<View, View> = emptyMap()
+    // Posição real (em pixels de tela) de cada elemento navegável da órbita
+    // (centro, bolhas de categoria, satélites) -- usada pra decidir pra
+    // onde o D-pad deve ir baseado em geometria de verdade, em vez de uma
+    // regra fixa tipo "cima/baixo sempre vai pro centro" que ficava errada
+    // pra bolhas que não estão nem acima nem abaixo do centro na tela.
+    private var orbitPositions: Map<View, PointF> = emptyMap()
     private val homeClockTicker = object : Runnable {
         override fun run() {
             updateHomeClock()
@@ -816,37 +822,49 @@ class MainActivity : Activity() {
             }
         }
         if (focused in exactHomeHotspots) return moveExactHomeHotspot(focused, keyCode)
-        val center = orbitCenterCard
-        val bubbles = orbitBubbles
-        if (focused === center) {
-            return when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT -> focusNavigationForCurrentSection()
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN, KeyEvent.KEYCODE_DPAD_RIGHT -> bubbles.firstOrNull()?.requestFocus() ?: true
-                else -> false
-            }
-        }
-        if (focused in bubbles) {
-            val index = bubbles.indexOf(focused)
-            val satellites = orbitSatelliteGroups.getOrNull(index).orEmpty()
-            return when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT -> if (index == 0) focusNavigationForCurrentSection() else bubbles[(index - 1 + bubbles.size) % bubbles.size].requestFocus()
-                KeyEvent.KEYCODE_DPAD_RIGHT -> satellites.firstOrNull()?.requestFocus() ?: bubbles[(index + 1) % bubbles.size].requestFocus()
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> center?.requestFocus() ?: true
-                else -> false
-            }
-        }
-        val parent = orbitSatelliteParents[focused]
-        if (parent != null) {
-            val group = orbitSatelliteGroups.firstOrNull { parent in it || it.isNotEmpty() && orbitSatelliteParents[it.first()] === parent }.orEmpty()
-            val index = group.indexOf(focused)
-            return when (keyCode) {
-                KeyEvent.KEYCODE_DPAD_LEFT -> parent.requestFocus()
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (index >= 0 && group.isNotEmpty()) group[(index + 1) % group.size].requestFocus() else parent.requestFocus()
-                KeyEvent.KEYCODE_DPAD_UP, KeyEvent.KEYCODE_DPAD_DOWN -> parent.requestFocus()
-                else -> false
-            }
-        }
+        if (focused in orbitPositions) return moveOrbitDpad(focused, keyCode)
         return false
+    }
+
+    // Navegação por geometria real de tela dentro da órbita: acha, entre
+    // todos os elementos navegáveis (centro/bolhas/satélites), o mais
+    // próximo que esteja de fato na direção pedida -- em vez da regra fixa
+    // antiga ("cima/baixo sempre pro centro", "esquerda só sai da 1a bolha")
+    // que ficava errada pra qualquer bolha que não estivesse alinhada
+    // exatamente acima/abaixo/ao lado do centro.
+    private fun moveOrbitDpad(focused: View, keyCode: Int): Boolean {
+        val from = orbitPositions[focused] ?: return false
+        val (dx, dy) = when (keyCode) {
+            KeyEvent.KEYCODE_DPAD_LEFT -> -1f to 0f
+            KeyEvent.KEYCODE_DPAD_RIGHT -> 1f to 0f
+            KeyEvent.KEYCODE_DPAD_UP -> 0f to -1f
+            KeyEvent.KEYCODE_DPAD_DOWN -> 0f to 1f
+            else -> return false
+        }
+        var best: View? = null
+        var bestPerp = 0f
+        var bestScore = Float.MAX_VALUE
+        for ((view, point) in orbitPositions) {
+            if (view === focused) continue
+            val vx = point.x - from.x
+            val vy = point.y - from.y
+            val along = vx * dx + vy * dy
+            if (along <= dp(4)) continue
+            val perp = kotlin.math.abs(vx * dy - vy * dx)
+            val score = along + perp * 2.2f
+            if (score < bestScore) {
+                bestScore = score
+                best = view
+                bestPerp = perp
+            }
+        }
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT && (best == null || bestPerp > dp(90))) {
+            // Nada claramente à esquerda (ou o mais próximo está bem mais
+            // "de lado" que "à esquerda") -- sai pra barra lateral, que é a
+            // convenção esperada numa TV: esquerda sempre alcança o menu.
+            return focusNavigationForCurrentSection()
+        }
+        return best?.requestFocus() ?: false
     }
 
     private fun moveExactHomeHotspot(focused: View, keyCode: Int): Boolean {
@@ -2576,6 +2594,16 @@ class MainActivity : Activity() {
         orbitSatelliteParents = satelliteGroups.flatMapIndexed { index, group ->
             group.map { it to bubbles[index] }
         }.toMap()
+        orbitPositions = buildMap {
+            put(center, PointF(centerX, centerY))
+            bubbles.forEachIndexed { index, bubble -> put(bubble, points[index]) }
+            satelliteGroups.forEach { group ->
+                group.forEach { satellite ->
+                    val lp = satellite.layoutParams as FrameLayout.LayoutParams
+                    put(satellite, PointF(lp.leftMargin + satellite.layoutParams.width / 2f, lp.topMargin + satellite.layoutParams.height / 2f))
+                }
+            }
+        }
         orbitLines.setPoints(PointF(centerX, centerY), points, satelliteLinks)
         orbitCenterCard?.post {
             if (homeMode && currentFocus == null) orbitCenterCard?.requestFocus()
