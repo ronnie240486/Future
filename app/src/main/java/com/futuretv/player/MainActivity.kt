@@ -597,6 +597,11 @@ class MainActivity : Activity() {
         val target = when {
             navigationRowForFocus(focused) != null -> navigationRowForFocus(focused)
             focused === searchHint -> searchHint
+            // O container (homeUserHeader) é focável pelo D-pad, mas quem
+            // recebe o clique de verdade é o avatar (homeProfileImage) --
+            // sem esse caso, OK no cabeçalho do perfil não achava nenhum
+            // alvo clicável e não fazia nada.
+            focused === homeUserHeader -> homeProfileImage
             catalogRowForFocus(focused) != null -> catalogRowForFocus(focused)
             isWithin(focused, channelList) -> channelList.getChildAt(0)
             focused === categoryParent -> categoryList.getChildAt(0)
