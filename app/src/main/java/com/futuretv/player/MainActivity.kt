@@ -5181,6 +5181,17 @@ class MainActivity : Activity() {
         })
         header.addView(headerText)
         header.addView(TextView(this).apply {
+            val versionName = runCatching { packageManager.getPackageInfo(packageName, 0).versionName }.getOrDefault("?")
+            text = "BUILD $versionName"
+            textSize = 10f
+            setTypeface(typeface, android.graphics.Typeface.BOLD)
+            setTextColor(Color.rgb(255, 214, 120))
+            gravity = Gravity.CENTER
+            background = settingsGlassDrawable(false, false)
+            setPadding(dp(12), dp(7), dp(12), dp(7))
+            layoutParams = LinearLayout.LayoutParams(-2, -2).apply { marginEnd = dp(10) }
+        })
+        header.addView(TextView(this).apply {
             text = "●  CONECTADO"
             textSize = 11f
             setTypeface(typeface, android.graphics.Typeface.BOLD)
