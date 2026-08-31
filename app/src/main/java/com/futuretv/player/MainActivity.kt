@@ -1563,6 +1563,11 @@ class MainActivity : Activity() {
         channelList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
         channelList.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         channelList.adapter = catalogAdapter
+        // Mantem mais linhas "prontas" fora da tela (o padrao do Android e
+        // só 2), pra a capinha já estar carregada ou quase quando a linha
+        // vira visível ao rolar, em vez de aparecer em branco por um
+        // instante e só então a imagem chegar.
+        channelList.setItemViewCacheSize(14)
         channelList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)

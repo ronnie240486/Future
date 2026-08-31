@@ -137,7 +137,7 @@ class PlaylistRepository(private val context: Context) {
     // mais de uma thread, já que múltiplas chamadas de rede podem rodar em
     // paralelo sem disputar recurso local) garante que a troca de categoria
     // nunca espera por rede.
-    private val metadataExecutor = Executors.newFixedThreadPool(3)
+    private val metadataExecutor = Executors.newFixedThreadPool(4)
     private val cacheFile = File(context.filesDir, "catalog-cache.tsv.gz")
     private val metadata = context.getSharedPreferences("playlist_cache_metadata", Context.MODE_PRIVATE)
     private val database = CatalogDatabase(context)

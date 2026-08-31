@@ -23,7 +23,11 @@ class ImageLoader(context: Context) {
     // tamanho reduzido (adequado pra uma capinha de grade) e guarda em
     // disco, então na segunda vez (inclusive depois de fechar o app) é
     // leitura local, não rede.
-    private val executor = Executors.newFixedThreadPool(4)
+    // Imagens agora saem bem menores (decodificadas em ate ~480px em vez de
+    // resolucao original), entao cada download/decodificacao e mais leve --
+    // da pra ter mais requisicoes em paralelo sem sobrecarregar a CPU de
+    // uma TV box fraca do jeito que sobrecarregava antes.
+    private val executor = Executors.newFixedThreadPool(6)
     private val memoryCache = object : LruCache<String, Bitmap>(memoryBudget()) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount / 1024
     }
