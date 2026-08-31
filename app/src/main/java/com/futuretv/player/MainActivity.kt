@@ -2161,8 +2161,17 @@ class MainActivity : Activity() {
             // mas o calculo de direcao fiel a posicao visual real da bolha.
             val anchorX: Float = (left + right) / 2f,
             val anchorY: Float = (top + bottom) / 2f,
+            // Retangulo SÓ da bolha/rótulo principal (não mesclado com os
+            // satélites). Usado apenas pra desenhar o destaque branco --
+            // a área clicável continua sendo o grupo inteiro (left/top/
+            // right/bottom acima), pra não obrigar o usuário a acertar um
+            // alvo pequeno com o controle remoto, mas o destaque visual só
+            // aparece em cima do ícone/rótulo principal, não do grupo todo.
+            val labelLeft: Float = left,
+            val labelTop: Float = top,
+            val labelRight: Float = right,
+            val labelBottom: Float = bottom,
         )
-
         val openLive = { switchSection(MediaKind.LIVE) }
         val openChannels = { switchSection(MediaKind.LIVE) }
         val openMovies = { switchSection(MediaKind.MOVIE) }
@@ -2240,6 +2249,10 @@ class MainActivity : Activity() {
                 action = main.action,
                 anchorX = (main.left + main.right) / 2f,
                 anchorY = (main.top + main.bottom) / 2f,
+                labelLeft = main.left,
+                labelTop = main.top,
+                labelRight = main.right,
+                labelBottom = main.bottom,
             )
         }
 
@@ -2254,10 +2267,17 @@ class MainActivity : Activity() {
                 isFocusable = true
                 isClickable = true
                 setOnClickListener { hotspot.action() }
-                // Sem anel/círculo -- o usuário achou o anel feio de
-                // qualquer tamanho. Foco agora é um destaque branco
-                // translúcido cobrindo a própria região do ícone.
-                foreground = focusWhiteOverlay()
+                // Sem anel/círculo, e sem cobrir o grupo inteiro (bolha +
+                // satélites) -- o destaque branco agora fica só em cima da
+                // bolha/rótulo principal daquela categoria, calculado como
+                // um recorte (inset) dentro da área clicável maior.
+                val boxSpanW = (hotspot.right - hotspot.left).coerceAtLeast(0.0001f)
+                val boxSpanH = (hotspot.bottom - hotspot.top).coerceAtLeast(0.0001f)
+                val insetLeft = (((hotspot.labelLeft - hotspot.left) / boxSpanW) * boxWidth).toInt().coerceAtLeast(0)
+                val insetTop = (((hotspot.labelTop - hotspot.top) / boxSpanH) * boxHeight).toInt().coerceAtLeast(0)
+                val insetRight = (((hotspot.right - hotspot.labelRight) / boxSpanW) * boxWidth).toInt().coerceAtLeast(0)
+                val insetBottom = (((hotspot.bottom - hotspot.labelBottom) / boxSpanH) * boxHeight).toInt().coerceAtLeast(0)
+                foreground = android.graphics.drawable.InsetDrawable(focusWhiteOverlay(), insetLeft, insetTop, insetRight, insetBottom)
                 tag = PointF(hotspot.anchorX * width, hotspot.anchorY * height)
             }
         }
