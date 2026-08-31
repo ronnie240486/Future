@@ -944,6 +944,18 @@ class MainActivity : Activity() {
     }
 
     private fun focusNavigationForCurrentSection(): Boolean {
+        // Na Home, a barra lateral visível é homeSidebarTabs (Doramas,
+        // Novelas Turcas...) -- navItems é a barra ANTIGA (Canais, Filmes,
+        // Séries...) que fica escondida (visibility=GONE) o tempo todo em
+        // que estamos na Home. Chamar requestFocus() num filho de uma view
+        // GONE sempre falha silenciosamente -- por isso "esquerda pra
+        // sidebar" nunca funcionava de dentro da órbita, não importa como
+        // eu ajustasse a lógica de navegação: estava sempre mirando na
+        // barra errada, que nem está na tela.
+        if (homeMode && ::homeSidebarTabs.isInitialized && homeSidebarTabs.isShown) {
+            homeSidebarTabs.focusFirstTab()
+            return true
+        }
         val target = (0 until navItems.childCount)
             .map { navItems.getChildAt(it) }
             .firstOrNull { isNavigationSelected(it.tag as? String ?: "") }
