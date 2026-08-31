@@ -873,6 +873,16 @@ class MainActivity : Activity() {
     }
 
     private fun moveExactHomeHotspot(focused: View, keyCode: Int): Boolean {
+        // Mesma regra do moveOrbitDpad: esquerda SEMPRE vai direto pra
+        // sidebar, sem exceção -- exactHomeHotspots é um sistema de foco
+        // separado do orbitPositions (coordenadas fixas antigas, calibradas
+        // pra um layout de fundo diferente do que a órbita nova desenha por
+        // cima). Antes disso, "esquerda" aqui só achava o hotspot mais à
+        // esquerda entre os próprios hotspots, e se não achasse nenhum, só
+        // "engolia" a tecla sem fazer nada -- por isso esquerda nunca saía
+        // pra sidebar quando o foco estava num hotspot (em vez de numa
+        // bolha/satélite da órbita).
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return focusNavigationForCurrentSection()
         val sourceAnchor = focused.tag as? PointF
         val source = focused.layoutParams as? FrameLayout.LayoutParams ?: return false
         val sourceX = sourceAnchor?.x ?: (source.leftMargin + focused.width / 2f)
