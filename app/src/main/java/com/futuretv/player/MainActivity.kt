@@ -2254,18 +2254,10 @@ class MainActivity : Activity() {
                 isFocusable = true
                 isClickable = true
                 setOnClickListener { hotspot.action() }
-                // O retângulo clicável junta bolha principal + satélites
-                // (comentário acima), então costuma ser bem maior que o
-                // ícone principal sozinho -- se o anel de foco esticasse
-                // pra cobrir o retângulo inteiro, virava uma "bolha" enorme
-                // e torta em volta de vários ícones ao mesmo tempo. Aqui o
-                // anel fica menor (65% do menor lado) e centralizado no
-                // próprio retângulo, então visualmente hugueia só a região
-                // do ícone principal em vez do grupo todo.
-                val ringSize = (minOf(boxWidth, boxHeight) * 0.65f).toInt().coerceAtLeast(dp(20))
-                val insetX = ((boxWidth - ringSize) / 2f).toInt().coerceAtLeast(0)
-                val insetY = ((boxHeight - ringSize) / 2f).toInt().coerceAtLeast(0)
-                foreground = android.graphics.drawable.InsetDrawable(ovalFocusRing(), insetX, insetY, insetX, insetY)
+                // Sem anel/círculo -- o usuário achou o anel feio de
+                // qualquer tamanho. Foco agora é um destaque branco
+                // translúcido cobrindo a própria região do ícone.
+                foreground = focusWhiteOverlay()
                 tag = PointF(hotspot.anchorX * width, hotspot.anchorY * height)
             }
         }
@@ -2656,6 +2648,16 @@ class MainActivity : Activity() {
         val focused = GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(3), Color.WHITE) }
         selector.addState(intArrayOf(android.R.attr.state_focused), focused)
         selector.addState(intArrayOf(), GradientDrawable().apply { shape = GradientDrawable.OVAL })
+        return selector
+    }
+
+    // Sem anel/borda -- só um branco translúcido por cima do ícone quando
+    // focado, sem nada quando não está.
+    private fun focusWhiteOverlay(): android.graphics.drawable.Drawable {
+        val selector = android.graphics.drawable.StateListDrawable()
+        val focused = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x4DFFFFFF) }
+        selector.addState(intArrayOf(android.R.attr.state_focused), focused)
+        selector.addState(intArrayOf(), GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.TRANSPARENT) })
         return selector
     }
 
