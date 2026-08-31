@@ -203,7 +203,7 @@ class MainActivity : Activity() {
     private val repository by lazy { PlaylistRepository(this) }
     private val appIntegration = AppIntegrationRepository()
     private val radioRepository by lazy { RadioRepository(this) }
-    private val imageLoader = ImageLoader()
+    private val imageLoader by lazy { ImageLoader(this) }
     private val epgRepository = EpgRepository()
     private var epgByChannel: Map<String, List<EpgProgram>> = emptyMap()
     private lateinit var catalogAdapter: CatalogAdapter
