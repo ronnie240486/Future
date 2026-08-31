@@ -1586,6 +1586,16 @@ class MainActivity : Activity() {
         navItems.layoutParams = FrameLayout.LayoutParams(-1, -1)
         navItems.clipChildren = true
         navItems.clipToPadding = true
+        // O fundo curvo (SidebarGlassDrawable) afina no meio da barra --
+        // sem essa margem à direita, o retângulo branco de seleção (que
+        // sempre usa a largura toda do item) estourava pra fora da forma
+        // ondulada bem no item do meio (Séries). Reservando uma margem à
+        // direita, o retângulo fica sempre dentro do ponto mais estreito
+        // da curva, em qualquer item.
+        navItems.post {
+            val pad = (navItems.width * 0.30f).toInt()
+            navItems.setPadding(0, navItems.paddingTop, pad, navItems.paddingBottom)
+        }
         // Ordem e conjunto visíveis seguem a referência aprovada: sem a
         // navegação antiga duplicada de Início/Voz no shell interno.
         val items = listOf(
@@ -2267,17 +2277,10 @@ class MainActivity : Activity() {
                 isFocusable = true
                 isClickable = true
                 setOnClickListener { hotspot.action() }
-                // Sem anel/círculo, e sem cobrir o grupo inteiro (bolha +
-                // satélites) -- o destaque branco agora fica só em cima da
-                // bolha/rótulo principal daquela categoria, calculado como
-                // um recorte (inset) dentro da área clicável maior.
-                val boxSpanW = (hotspot.right - hotspot.left).coerceAtLeast(0.0001f)
-                val boxSpanH = (hotspot.bottom - hotspot.top).coerceAtLeast(0.0001f)
-                val insetLeft = (((hotspot.labelLeft - hotspot.left) / boxSpanW) * boxWidth).toInt().coerceAtLeast(0)
-                val insetTop = (((hotspot.labelTop - hotspot.top) / boxSpanH) * boxHeight).toInt().coerceAtLeast(0)
-                val insetRight = (((hotspot.right - hotspot.labelRight) / boxSpanW) * boxWidth).toInt().coerceAtLeast(0)
-                val insetBottom = (((hotspot.bottom - hotspot.labelBottom) / boxSpanH) * boxHeight).toInt().coerceAtLeast(0)
-                foreground = android.graphics.drawable.InsetDrawable(focusWhiteOverlay(), insetLeft, insetTop, insetRight, insetBottom)
+                // Removido por completo a pedido do usuário -- nenhum
+                // destaque visual (nem anel, nem branco) quando o item da
+                // Home está focado. Continua clicável/focável normalmente,
+                // só não desenha mais nada em cima do ícone.
                 tag = PointF(hotspot.anchorX * width, hotspot.anchorY * height)
             }
         }
