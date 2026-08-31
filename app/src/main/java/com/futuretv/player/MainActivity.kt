@@ -873,16 +873,6 @@ class MainActivity : Activity() {
     }
 
     private fun moveExactHomeHotspot(focused: View, keyCode: Int): Boolean {
-        // Mesma regra do moveOrbitDpad: esquerda SEMPRE vai direto pra
-        // sidebar, sem exceção -- exactHomeHotspots é um sistema de foco
-        // separado do orbitPositions (coordenadas fixas antigas, calibradas
-        // pra um layout de fundo diferente do que a órbita nova desenha por
-        // cima). Antes disso, "esquerda" aqui só achava o hotspot mais à
-        // esquerda entre os próprios hotspots, e se não achasse nenhum, só
-        // "engolia" a tecla sem fazer nada -- por isso esquerda nunca saía
-        // pra sidebar quando o foco estava num hotspot (em vez de numa
-        // bolha/satélite da órbita).
-        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) return focusNavigationForCurrentSection()
         val sourceAnchor = focused.tag as? PointF
         val source = focused.layoutParams as? FrameLayout.LayoutParams ?: return false
         val sourceX = sourceAnchor?.x ?: (source.leftMargin + focused.width / 2f)
@@ -929,6 +919,16 @@ class MainActivity : Activity() {
         if (keyCode == KeyEvent.KEYCODE_DPAD_UP && sourceY <= homeUserHeader.height + dp(80)) {
             homeUserHeader.requestFocus()
             return true
+        }
+        // ESQUERDA na borda (nenhum hotspot mais à esquerda pra ir, ex:
+        // Kids/Sonhos ou Sports/Conexão Esporte, que já são os mais à
+        // esquerda do grupo deles) sai pra sidebar. Isso só acontece quando
+        // já não tem mais pra onde ir dentro da grade -- diferente de antes,
+        // que forçava esquerda pra sidebar sempre, mesmo quando ainda dava
+        // pra mover dentro da grade, e por isso Kids e Sports (que ficam à
+        // esquerda de Radios/Movies) ficavam inalcançáveis.
+        if (keyCode == KeyEvent.KEYCODE_DPAD_LEFT) {
+            return focusNavigationForCurrentSection()
         }
         // Consome a direção nas bordas para não deixar o Android saltar para
         // uma view invisível ou para fora da composição orbital.
@@ -2245,17 +2245,27 @@ class MainActivity : Activity() {
 
         exactHomeHotspots = mergedHotspots.map { hotspot ->
             View(this).apply {
-                layoutParams = FrameLayout.LayoutParams(
-                    ((hotspot.right - hotspot.left) * width).toInt().coerceAtLeast(24),
-                    ((hotspot.bottom - hotspot.top) * height).toInt().coerceAtLeast(24),
-                ).apply {
+                val boxWidth = ((hotspot.right - hotspot.left) * width).toInt().coerceAtLeast(24)
+                val boxHeight = ((hotspot.bottom - hotspot.top) * height).toInt().coerceAtLeast(24)
+                layoutParams = FrameLayout.LayoutParams(boxWidth, boxHeight).apply {
                     leftMargin = (hotspot.left * width).toInt()
                     topMargin = (hotspot.top * height).toInt()
                 }
                 isFocusable = true
                 isClickable = true
                 setOnClickListener { hotspot.action() }
-                foreground = ovalFocusRing()
+                // O retângulo clicável junta bolha principal + satélites
+                // (comentário acima), então costuma ser bem maior que o
+                // ícone principal sozinho -- se o anel de foco esticasse
+                // pra cobrir o retângulo inteiro, virava uma "bolha" enorme
+                // e torta em volta de vários ícones ao mesmo tempo. Aqui o
+                // anel fica menor (65% do menor lado) e centralizado no
+                // próprio retângulo, então visualmente hugueia só a região
+                // do ícone principal em vez do grupo todo.
+                val ringSize = (minOf(boxWidth, boxHeight) * 0.65f).toInt().coerceAtLeast(dp(20))
+                val insetX = ((boxWidth - ringSize) / 2f).toInt().coerceAtLeast(0)
+                val insetY = ((boxHeight - ringSize) / 2f).toInt().coerceAtLeast(0)
+                foreground = android.graphics.drawable.InsetDrawable(ovalFocusRing(), insetX, insetY, insetX, insetY)
                 tag = PointF(hotspot.anchorX * width, hotspot.anchorY * height)
             }
         }
