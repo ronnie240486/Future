@@ -2261,16 +2261,20 @@ class MainActivity : Activity() {
 
         val hotspots = listOf(
             // Canal central.
-            Hotspot(0.34f, 0.24f, 0.68f, 0.76f, "center", openCenter),
+            // Coordenadas abaixo foram medidas direto na imagem de fundo
+            // (future_home_clean_for_native_sidebar.png, 1536x672) -- antes
+            // eram só uma estimativa de olho, e por isso a borda de foco
+            // ficava sempre um pouco deslocada do ícone de verdade.
+            Hotspot(0.42f, 0.27f, 0.64f, 0.73f, "center", openCenter),
             // Busca e hubs principais.
-            Hotspot(0.88f, 0.00f, 1.00f, 0.16f, "search", { showSearchDialog() }),
-            Hotspot(0.47f, 0.00f, 0.61f, 0.19f, "channels", openChannels),
-            Hotspot(0.26f, 0.11f, 0.44f, 0.31f, "sports", openSports),
-            Hotspot(0.62f, 0.09f, 0.80f, 0.30f, "movies", openMovies),
-            Hotspot(0.74f, 0.30f, 0.94f, 0.57f, "series", openSeries),
-            Hotspot(0.64f, 0.66f, 0.83f, 0.90f, "favorites", openFavorites),
-            Hotspot(0.40f, 0.69f, 0.61f, 0.94f, "radios", openRadios),
-            Hotspot(0.23f, 0.66f, 0.43f, 0.90f, "kids", openKids),
+            Hotspot(0.94f, 0.03f, 0.99f, 0.12f, "search", { showSearchDialog() }),
+            Hotspot(0.49f, 0.03f, 0.57f, 0.18f, "channels", openChannels),
+            Hotspot(0.34f, 0.11f, 0.42f, 0.29f, "sports", openSports),
+            Hotspot(0.68f, 0.16f, 0.75f, 0.32f, "movies", openMovies),
+            Hotspot(0.74f, 0.42f, 0.81f, 0.60f, "series", openSeries),
+            Hotspot(0.65f, 0.64f, 0.73f, 0.80f, "favorites", openFavorites),
+            Hotspot(0.51f, 0.74f, 0.59f, 0.91f, "radios", openRadios),
+            Hotspot(0.31f, 0.63f, 0.38f, 0.80f, "kids", openKids),
             // Satélites Esporte.
             Hotspot(0.25f, 0.10f, 0.30f, 0.18f, "sports", openSports),
             Hotspot(0.34f, 0.06f, 0.40f, 0.14f, "sports", openSports),
@@ -2843,10 +2847,20 @@ class MainActivity : Activity() {
             runOnUiThread {
                 val match = groups.firstOrNull { group -> matchesHomeSeriesCategory(group, category) }
                 if (match == null) {
+                    if (catalogImportInProgress) {
+                        // Antes bloqueava tudo com um aviso até a importação
+                        // inteira terminar. Agora abre a seção Séries geral
+                        // (com o que já foi importado até aqui) em vez de
+                        // travar o usuário -- a categoria específica some
+                        // do aviso e aparece sozinha assim que for
+                        // importada (a lista cresce sozinha em segundo
+                        // plano).
+                        Toast.makeText(this, "\"$label\" ainda não apareceu -- mostrando Séries com o que já carregou.", Toast.LENGTH_LONG).show()
+                        switchSection(MediaKind.SERIES, autoSelectFirst = true)
+                        return@runOnUiThread
+                    }
                     val message = if (category == HomeSeriesCategory.ANIMES) {
                         "Nenhuma categoria da Crunchyroll foi encontrada no catálogo."
-                    } else if (catalogImportInProgress) {
-                        "Ainda carregando \"$label\" — tente novamente em alguns segundos."
                     } else {
                         "Nenhuma categoria de \"$label\" encontrada no seu catálogo."
                     }

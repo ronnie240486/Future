@@ -1087,13 +1087,38 @@ class PlaylistRepository(private val context: Context) {
         .replace("\\\\/", "/")
         .trim()
 
+    private fun stripDiacritics(value: String): String =
+        java.text.Normalizer.normalize(value, java.text.Normalizer.Form.NFD).replace(Regex("\\p{M}+"), "")
+
     private fun classify(name: String, group: String): MediaKind {
-        val normalizedGroup = group.lowercase().trim()
-        val normalizedName = name.lowercase()
-        if (normalizedGroup.startsWith("filmes |")) return MediaKind.MOVIE
-        if (normalizedGroup.startsWith("series |")) return MediaKind.SERIES
+        // BUG GRAVE encontrado aqui: a checagem original comparava com
+        // "series |" (sem acento, em inglês), mas painéis brasileiros
+        // praticamente sempre usam "SÉRIES |" (com acento). Como
+        // .lowercase() NÃO remove acento, "séries |" nunca batia com
+        // "series |" -- então TUDO que devia cair em Séries (Netflix, AMC,
+        // Amazon Prime, Novelas, Doramas, etc) caía no fallback final
+        // (LIVE), a menos que o NOME do item tivesse um padrão explícito de
+        // temporada/episódio -- que não existe no formato comum de "uma
+        // linha só por série" que a maioria dos painéis entrega. Agora
+        // remove acento antes de comparar, e aceita separador com espaço,
+        // dois-pontos ou traço além do pipe.
+        val normalizedGroup = stripDiacritics(group).lowercase().trim()
+        val normalizedName = stripDiacritics(name).lowercase()
+        if (normalizedGroup.startsWith("filmes |") || normalizedGroup.startsWith("filmes:") || normalizedGroup.startsWith("filmes -")) return MediaKind.MOVIE
+        if (normalizedGroup == "series" ||
+            normalizedGroup.startsWith("series |") ||
+            normalizedGroup.startsWith("series:") ||
+            normalizedGroup.startsWith("series -") ||
+            normalizedGroup.startsWith("series-")
+        ) return MediaKind.SERIES
         if (normalizedGroup.contains("24/7 filmes") || normalizedGroup.contains("24/7 seriados") || normalizedGroup.contains("24/7 doramas") || normalizedGroup.contains("24/7 animes") || normalizedGroup.contains("24/7 novelas")) return MediaKind.LIVE
-        if (normalizedGroup == "filmes e séries" || normalizedGroup == "filmes e series") return MediaKind.LIVE
+        if (normalizedGroup == "filmes e series") return MediaKind.LIVE
+        // Sub-categorias de série que painéis costumam usar SEM o prefixo
+        // "séries |" na frente (a categoria inteira já é "NOVELAS",
+        // "DORAMAS", "ANIMES", etc.) -- mas só quando não é claramente um
+        // grupo de canal ao vivo 24h (esses já foram tratados acima).
+        val seriesGroupWords = listOf("novela", "dorama", "k-drama", "kdrama", "anime", "reelshort", "crunchyroll")
+        if (seriesGroupWords.any { normalizedGroup.contains(it) }) return MediaKind.SERIES
         if (normalizedName.contains("temporada") || SEASON_NAME_PATTERN.containsMatchIn(normalizedName) || SERIES_SEASON_PATTERN.containsMatchIn(name) || SERIES_COMBINED_PATTERN.containsMatchIn(name)) return MediaKind.SERIES
         if (normalizedName.contains("filme") || normalizedName.contains("movie")) return MediaKind.MOVIE
         return MediaKind.LIVE
