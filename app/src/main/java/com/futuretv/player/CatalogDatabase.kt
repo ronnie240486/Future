@@ -489,7 +489,7 @@ class CatalogDatabase(context: Context) {
             db.execSQL("CREATE INDEX idx_catalog_kind_group ON $TABLE(kind, group_title)")
             db.execSQL("CREATE INDEX idx_catalog_name ON $TABLE(name COLLATE NOCASE)")
             db.execSQL("CREATE INDEX idx_catalog_series_season ON $TABLE(kind, series_group, season)")
-            db.execSQL("CREATE INDEX idx_catalog_series_identity ON $TABLE(kind, series_identity, rowid)")
+            db.execSQL("CREATE INDEX idx_catalog_series_identity ON $TABLE(kind, series_identity)")
         }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_season ON $TABLE(kind, series_group, season)")
@@ -517,7 +517,12 @@ class CatalogDatabase(context: Context) {
                 // atualização).
                 db.execSQL("ALTER TABLE $TABLE ADD COLUMN series_identity TEXT NOT NULL DEFAULT ''")
                 db.execSQL("UPDATE $TABLE SET series_identity = LOWER(TRIM(CASE WHEN TRIM(series_group) <> '' THEN series_group ELSE name END)) WHERE kind='SERIES'")
-                db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_identity ON $TABLE(kind, series_identity, rowid)")
+                // "rowid" nao pode ser escrito explicitamente dentro da
+                // lista de colunas do CREATE INDEX no SQLite dessa TV box
+                // (erro real visto: "no such column: rowid") -- rowid já
+                // fica disponível em toda consulta/ordenação de qualquer
+                // jeito, sem precisar declarar ele aqui.
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_identity ON $TABLE(kind, series_identity)")
             }
         }
     }
