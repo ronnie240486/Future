@@ -5073,6 +5073,7 @@ class MainActivity : Activity() {
             showCatalogUnavailable("A lista do painel foi recebida vazia.")
             return
         }
+        catalogAutoRetryCount = 0
         catalog = snapshot
         databaseBackedCatalog = snapshot.databaseBacked
         categoryCache.clear()
@@ -5123,6 +5124,7 @@ class MainActivity : Activity() {
         }
     }
 
+    private var catalogAutoRetryCount = 0
     private fun showCatalogUnavailable(message: String) {
         if (databaseBackedCatalog || catalog.totalCount > 0) {
             Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
@@ -5137,6 +5139,19 @@ class MainActivity : Activity() {
         renderCategories()
         renderCatalog()
         Toast.makeText(this, message, Toast.LENGTH_LONG).show()
+        // Pedido explícito do usuário: se algo deu errado no carregamento
+        // (lista vazia, painel não respondeu, etc), não fica esperando o
+        // usuário perceber e mexer em nada -- tenta de novo sozinho, com um
+        // limite de tentativas pra não ficar em loop infinito gastando
+        // rede/bateria se o problema for permanente (ex: painel realmente
+        // fora do ar).
+        if (catalogAutoRetryCount < 4) {
+            catalogAutoRetryCount++
+            val delayMs = 6_000L * catalogAutoRetryCount
+            mainHandler.postDelayed({
+                if (!databaseBackedCatalog && catalog.totalCount <= 0) loadRemoteConfiguration()
+            }, delayMs)
+        }
     }
 
     private fun showAccessUnavailable(config: RemoteAppConfig) {
