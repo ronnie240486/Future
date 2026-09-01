@@ -2270,10 +2270,10 @@ class MainActivity : Activity() {
             Hotspot(0.94f, 0.03f, 0.99f, 0.12f, "search", { showSearchDialog() }),
             Hotspot(0.49f, 0.03f, 0.57f, 0.18f, "channels", openChannels),
             Hotspot(0.34f, 0.11f, 0.42f, 0.29f, "sports", openSports),
-            Hotspot(0.68f, 0.16f, 0.75f, 0.32f, "movies", openMovies),
-            Hotspot(0.74f, 0.42f, 0.81f, 0.60f, "series", openSeries),
+            Hotspot(0.68f, 0.145f, 0.75f, 0.30f, "movies", openMovies),
+            Hotspot(0.732f, 0.417f, 0.80f, 0.58f, "series", openSeries),
             Hotspot(0.65f, 0.64f, 0.73f, 0.80f, "favorites", openFavorites),
-            Hotspot(0.51f, 0.74f, 0.59f, 0.91f, "radios", openRadios),
+            Hotspot(0.52f, 0.80f, 0.59f, 0.96f, "radios", openRadios),
             Hotspot(0.31f, 0.63f, 0.38f, 0.80f, "kids", openKids),
             // Satélites Esporte.
             Hotspot(0.25f, 0.10f, 0.30f, 0.18f, "sports", openSports),
@@ -5645,8 +5645,17 @@ class MainActivity : Activity() {
                 if (urls.size > 1) loadSelectedPlaylist(urls[selected]) else loadRemoteConfiguration()
             }
             .setNeutralButton("Limpar cache") { _, _ ->
-                repository.clearCache()
-                loadRemoteConfiguration()
+                // Antes isso rodava direto na thread principal -- apagar o
+                // banco inteiro (pode ter dezenas de milhares de linhas) sem
+                // sair dela travava a interface até o Android decidir que o
+                // app não respondia mais e fechar sozinho, e podia deixar o
+                // banco pela metade se o processo morresse no meio. Agora
+                // roda em segundo plano, com um aviso na tela.
+                Toast.makeText(this, "Limpando cache...", Toast.LENGTH_SHORT).show()
+                Thread {
+                    repository.clearCache()
+                    runOnUiThread { loadRemoteConfiguration() }
+                }.start()
             }
             .setNegativeButton("Fechar", null)
             .show()
