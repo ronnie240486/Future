@@ -2288,7 +2288,10 @@ class MainActivity : Activity() {
             // ficava sempre um pouco deslocada do ícone de verdade.
             Hotspot(0.42f, 0.27f, 0.64f, 0.73f, "center", openCenter),
             // Busca e hubs principais.
-            Hotspot(0.94f, 0.03f, 0.99f, 0.12f, "search", { showSearchDialog() }),
+            // Removido a pedido do usuário -- não fazia nada de útil
+            // quando acionado direto da Home (a busca dependia da tela
+            // interna de Canais/Filmes/Séries já estar aberta pra mostrar
+            // resultado em algum lugar).
             Hotspot(0.49f, 0.03f, 0.57f, 0.18f, "channels", openChannels),
             Hotspot(0.34f, 0.11f, 0.42f, 0.29f, "sports", openSports),
             Hotspot(0.68f, 0.145f, 0.75f, 0.30f, "movies", openMovies),
