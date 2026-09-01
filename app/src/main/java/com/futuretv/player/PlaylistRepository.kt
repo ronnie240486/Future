@@ -205,11 +205,16 @@ class PlaylistRepository(private val context: Context) {
         callback: (Result<CatalogSnapshot>) -> Unit,
     ) {
         importExecutor.execute {
+            val normalized = normalizeUrls(urls)
+            // Calculado ANTES do runCatching pra poder usar no bloco de
+            // recuperação também -- ver comentário abaixo do porquê isso
+            // importa.
+            val statsBefore = runCatching { database.stats() }.getOrDefault(CatalogDatabase.Stats(0, 0, 0, 0, 0, 0, 0))
+            val alreadyHadCompleteImport = statsBefore.total > 0 && normalized == savedUrls()
             val result = runCatching {
-                val normalized = normalizeUrls(urls)
                 xtreamSource = normalized.asSequence().mapNotNull(::parseXtreamSource).firstOrNull()
-                val stats = database.stats()
-                val sameUrls = stats.total > 0 && normalized == savedUrls()
+                val stats = statsBefore
+                val sameUrls = alreadyHadCompleteImport
                 if (sameUrls && cacheStillFresh()) {
                     // Cache confiável recentemente confirmado: abre na hora, sem
                     // ida à rede nenhuma. Muitos painéis Xtream (get.php) geram a
@@ -226,8 +231,25 @@ class PlaylistRepository(private val context: Context) {
                     downloadAndCache(normalized, onProgress, onCatalogReady)
                 }
             }.recoverCatching { failure ->
-                // Uma falha de origem não deve apagar um catálogo local que já funciona.
-                val cached = database.stats()
+                // BUG GRAVE encontrado aqui: isso tratava QUALQUER falha
+                // (rede, erro de parse, e até OutOfMemoryError -- runCatching
+                // pega Throwable, não só Exception) como sucesso silencioso
+                // desde que existisse QUALQUER linha no banco -- inclusive
+                // se a importação tivesse acabado de travar bem no meio,
+                // logo depois de só "Canais" ter sido gravado. Isso
+                // explicava exatamente o que o usuário via numa TV box mais
+                // fraca (menos RAM, mais provável de estourar memória no
+                // meio da importação): carrega canais, "para" como se
+                // tivesse terminado, sem nenhum filme/série -- e sem erro
+                // nenhum aparecendo, porque esse bloco escondia o erro.
+                // Agora só cai de volta pro cache silenciosamente quando já
+                // existia uma importação COMPLETA anterior dessa mesma URL
+                // (alreadyHadCompleteImport) -- uma importação NOVA que
+                // falhou no meio precisa aparecer como falha de verdade,
+                // pra registrar o erro e pro sistema de nova tentativa
+                // automática entrar em ação.
+                if (!alreadyHadCompleteImport) throw failure
+                val cached = statsBefore
                 if (cached.total <= 0) throw failure
                 onProgress(100)
                 CatalogSnapshot(emptyList(), loadedFromCache = true, totalCount = cached.total, groupCount = cached.groups, databaseBacked = true)
