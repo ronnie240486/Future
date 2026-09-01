@@ -33,10 +33,11 @@ class ImageLoader(context: Context) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount / 1024
     }
     private val diskCacheDir = File(context.cacheDir, "covers").apply { mkdirs() }
-    // Tamanho alvo pra decodificação -- generoso o bastante pra qualquer
-    // card de grade nesse app, mas bem menor que os 1000x1500+ que o TMDB
-    // costuma servir.
-    private val maxDecodeDimension = 480
+    // Tamanho alvo pra decodificação -- reduzido de 480 pra 360: os cards
+    // de capa nesse app nunca chegam perto de precisar de mais que isso, e
+    // quanto menor, mais rápido decodifica e menos memória usa numa TV box
+    // fraca.
+    private val maxDecodeDimension = 360
 
     fun load(url: String, target: ImageView, fallback: Int) {
         loadInternal(url, target, fallback, cropTransparent = false)
@@ -56,12 +57,18 @@ class ImageLoader(context: Context) {
             target.post { if (target.tag == key) target.setImageBitmap(bitmap) }
             return
         }
+        // RGB_565 (2 bytes/pixel, sem canal alfa) em vez de ARGB_8888 (4
+        // bytes/pixel) pra capinhas comuns -- metade da memória e mais
+        // rápido de desenhar numa GPU fraca. Só os logos com corte de
+        // transparência (cropTransparent) precisam do canal alfa de
+        // verdade, então esses continuam em ARGB_8888.
+        val config = if (cropTransparent) Bitmap.Config.ARGB_8888 else Bitmap.Config.RGB_565
         executor.execute {
             val diskFile = diskCacheFile(key)
             val downloaded = if (diskFile.exists()) {
-                runCatching { BitmapFactory.decodeFile(diskFile.absolutePath) }.getOrNull()
+                runCatching { BitmapFactory.decodeFile(diskFile.absolutePath, BitmapFactory.Options().apply { inPreferredConfig = config }) }.getOrNull()
             } else {
-                val fresh = download(url.trim())
+                val fresh = download(url.trim(), config)
                 if (fresh != null) runCatching { saveToDisk(fresh, diskFile) }
                 fresh
             }
@@ -83,7 +90,7 @@ class ImageLoader(context: Context) {
         file.outputStream().use { bitmap.compress(Bitmap.CompressFormat.JPEG, 88, it) }
     }
 
-    private fun download(url: String): Bitmap? = runCatching {
+    private fun download(url: String, config: Bitmap.Config): Bitmap? = runCatching {
         val connection = (URL(url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 5_000
             readTimeout = 8_000
@@ -95,7 +102,7 @@ class ImageLoader(context: Context) {
         try {
             if (connection.responseCode !in 200..299) return null
             val bytes = connection.inputStream.use { it.readBytes() }
-            decodeDownsampled(bytes)
+            decodeDownsampled(bytes, config)
         } finally {
             connection.disconnect()
         }
@@ -104,7 +111,7 @@ class ImageLoader(context: Context) {
     // Lê só as dimensões primeiro (sem alocar a imagem inteira), calcula
     // quanto reduzir, e só então decodifica de fato -- em vez de sempre
     // carregar o arquivo em resolução original pra memória.
-    private fun decodeDownsampled(bytes: ByteArray): Bitmap? {
+    private fun decodeDownsampled(bytes: ByteArray, config: Bitmap.Config): Bitmap? {
         val boundsOptions = BitmapFactory.Options().apply { inJustDecodeBounds = true }
         BitmapFactory.decodeByteArray(bytes, 0, bytes.size, boundsOptions)
         var sampleSize = 1
@@ -113,7 +120,7 @@ class ImageLoader(context: Context) {
         ) {
             sampleSize *= 2
         }
-        val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize }
+        val decodeOptions = BitmapFactory.Options().apply { inSampleSize = sampleSize; inPreferredConfig = config }
         return BitmapFactory.decodeByteArray(bytes, 0, bytes.size, decodeOptions)
     }
 

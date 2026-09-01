@@ -1619,6 +1619,16 @@ class MainActivity : Activity() {
         channelList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
         channelList.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         channelList.adapter = catalogAdapter
+        // A animação padrão do RecyclerView (fade/desloca item ao inserir,
+        // remover ou trocar) fica pesada numa GPU fraca de TV box,
+        // principalmente quando a lista cresce em lotes grandes durante a
+        // importação (growCatalogIfMore insere várias linhas de uma vez).
+        // Sem ganho real de usabilidade aqui -- é só custo de quadro.
+        channelList.itemAnimator = null
+        // Views das linhas têm tamanho fixo (mesma altura sempre) -- avisar
+        // isso evita todo um passo de remedir o layout inteiro a cada
+        // notifyDataSetChanged/scroll.
+        channelList.setHasFixedSize(true)
         // Trava o sistema numa TV box fraca se ficar alto demais -- 14 linhas
         // extra fora da tela, cada uma disparando carregamento de capinha,
         // é otimista demais pra hardware limitado. Reduzido pra um meio
