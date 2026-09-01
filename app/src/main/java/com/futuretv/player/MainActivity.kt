@@ -273,23 +273,24 @@ class MainActivity : Activity() {
                         applyPartialCatalogSnapshot(snapshot, stillLoading)
                     }
                     catalogImportInProgress = stillLoading
-                    if (!stillLoading) return@runOnUiThread
-                    val now = SystemClock.elapsedRealtime()
-                    if (percent != lastImportWatchPercent) {
-                        lastImportWatchPercent = percent
-                        lastImportProgressAt = now
-                    } else if (!importRecoveryTriggered && lastImportProgressAt != 0L && now - lastImportProgressAt > 15_000L) {
-                        // 15s sem o percentual se mexer: assume que o processo
-                        // que tava importando morreu, e retoma a importação
-                        // aqui mesmo, usando o repositorio desta Activity (que
-                        // esta em primeiro plano, bem menos provavel de ser
-                        // encerrada pelo sistema do que a de ativação, que
-                        // ficou em segundo plano).
-                        importRecoveryTriggered = true
-                        resumeStalledImport()
-                        return@runOnUiThread
+                    if (stillLoading) {
+                        val now = SystemClock.elapsedRealtime()
+                        if (percent != lastImportWatchPercent) {
+                            lastImportWatchPercent = percent
+                            lastImportProgressAt = now
+                        } else if (!importRecoveryTriggered && lastImportProgressAt != 0L && now - lastImportProgressAt > 15_000L) {
+                            importRecoveryTriggered = true
+                            resumeStalledImport()
+                            return@runOnUiThread
+                        }
+                        // Verificar o progresso de 2 em 2 segundos, competindo
+                        // com o usuário navegando/rolando listas ao mesmo
+                        // tempo (ambos batendo no SQLite), contribuía pra
+                        // travadinhas na navegação numa TV box fraca. 3.5s é
+                        // suficiente pra acompanhar o progresso sem brigar
+                        // tanto por acesso ao banco.
+                        mainHandler.postDelayed(this, 3_500)
                     }
-                    mainHandler.postDelayed(this, 2_000)
                 }
             }
         }
@@ -1622,7 +1623,7 @@ class MainActivity : Activity() {
         // extra fora da tela, cada uma disparando carregamento de capinha,
         // é otimista demais pra hardware limitado. Reduzido pra um meio
         // termo mais seguro.
-        channelList.setItemViewCacheSize(6)
+        channelList.setItemViewCacheSize(4)
         channelList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)
@@ -2339,13 +2340,22 @@ class MainActivity : Activity() {
             // uma oval torta -- um círculo de tamanho fixo não tem esse
             // problema, e como o anchor (centro) já foi medido direto na
             // imagem de fundo, fica bem alinhado com o ícone de verdade.
-            val ringSize = dp(72)
+            // Exceção: o canal central é muito maior que as outras bolhas
+            // (é o card em destaque, ocupa boa parte do meio da órbita), um
+            // anel de 72dp ali fica perdido/pequeno -- usa o tamanho real
+            // dele (baseado na mesma conta de heroSize usada lá em cima).
+            val ringSize = if (hotspot.group == "center") {
+                (minOf(width, height) * 0.47f).toInt()
+            } else {
+                dp(72)
+            }
+            val ringStroke = if (hotspot.group == "center") dp(3) else dp(2)
             val ring = View(this).apply {
                 layoutParams = FrameLayout.LayoutParams(ringSize, ringSize).apply {
                     leftMargin = (hotspot.anchorX * width - ringSize / 2f).toInt()
                     topMargin = (hotspot.anchorY * height - ringSize / 2f).toInt()
                 }
-                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), Color.rgb(255, 205, 90)) }
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(ringStroke, Color.rgb(255, 205, 90)) }
                 visibility = View.INVISIBLE
                 isDuplicateParentStateEnabled = false
             }

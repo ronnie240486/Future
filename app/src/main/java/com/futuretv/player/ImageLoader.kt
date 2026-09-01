@@ -25,10 +25,10 @@ class ImageLoader(context: Context) {
     // leitura local, não rede.
     // Imagens agora saem bem menores (decodificadas em ate ~480px em vez de
     // resolucao original), entao cada download/decodificacao e mais leve.
-    // Um numero mais alto aqui (tentei 6 antes) deixava o sistema travando
-    // numa TV box fraca com varias decodificacoes simultaneas -- 5 e um
-    // meio termo mais seguro.
-    private val executor = Executors.newFixedThreadPool(5)
+    // Reduzido de novo (era 5) -- usuario comparou com o Excellence (outro
+    // app da mesma casa) que roda mais leve numa TV box fraca, e menos
+    // trabalho concorrente ajuda a navegacao nao travar.
+    private val executor = Executors.newFixedThreadPool(3)
     private val memoryCache = object : LruCache<String, Bitmap>(memoryBudget()) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount / 1024
     }
