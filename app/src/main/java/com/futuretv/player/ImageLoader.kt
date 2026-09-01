@@ -24,10 +24,11 @@ class ImageLoader(context: Context) {
     // disco, então na segunda vez (inclusive depois de fechar o app) é
     // leitura local, não rede.
     // Imagens agora saem bem menores (decodificadas em ate ~480px em vez de
-    // resolucao original), entao cada download/decodificacao e mais leve --
-    // da pra ter mais requisicoes em paralelo sem sobrecarregar a CPU de
-    // uma TV box fraca do jeito que sobrecarregava antes.
-    private val executor = Executors.newFixedThreadPool(6)
+    // resolucao original), entao cada download/decodificacao e mais leve.
+    // Um numero mais alto aqui (tentei 6 antes) deixava o sistema travando
+    // numa TV box fraca com varias decodificacoes simultaneas -- 5 e um
+    // meio termo mais seguro.
+    private val executor = Executors.newFixedThreadPool(5)
     private val memoryCache = object : LruCache<String, Bitmap>(memoryBudget()) {
         override fun sizeOf(key: String, value: Bitmap) = value.byteCount / 1024
     }

@@ -17,6 +17,7 @@ import android.media.MediaPlayer
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
+import android.os.SystemClock
 import android.text.InputType
 import android.view.Gravity
 import android.view.KeyEvent
@@ -248,6 +249,16 @@ class MainActivity : Activity() {
     private var parentalUnlocked = false
     private var catalogImportInProgress = false
     private var catalogImportWatcherStarted = false
+    // Detecta importação "travada": se o percentual não anda por um tempo,
+    // é sinal de que o processo que estava importando (a ActivationActivity
+    // em segundo plano) morreu no meio -- Android pode matar uma activity em
+    // segundo plano a qualquer momento numa TV box com pouca memória. Sem
+    // isso, o app ficava esperando pra sempre um sinal de "terminei" que
+    // nunca ia chegar, e a lista de séries (ou qualquer parte que ainda não
+    // tinha sido importada) nunca aparecia.
+    private var lastImportWatchPercent = -1
+    private var lastImportProgressAt = 0L
+    private var importRecoveryTriggered = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val catalogImportWatcher = object : Runnable {
         override fun run() {
@@ -262,8 +273,52 @@ class MainActivity : Activity() {
                         applyPartialCatalogSnapshot(snapshot, stillLoading)
                     }
                     catalogImportInProgress = stillLoading
-                    if (stillLoading) mainHandler.postDelayed(this, 2_000)
+                    if (!stillLoading) return@runOnUiThread
+                    val now = SystemClock.elapsedRealtime()
+                    if (percent != lastImportWatchPercent) {
+                        lastImportWatchPercent = percent
+                        lastImportProgressAt = now
+                    } else if (!importRecoveryTriggered && lastImportProgressAt != 0L && now - lastImportProgressAt > 15_000L) {
+                        // 15s sem o percentual se mexer: assume que o processo
+                        // que tava importando morreu, e retoma a importação
+                        // aqui mesmo, usando o repositorio desta Activity (que
+                        // esta em primeiro plano, bem menos provavel de ser
+                        // encerrada pelo sistema do que a de ativação, que
+                        // ficou em segundo plano).
+                        importRecoveryTriggered = true
+                        resumeStalledImport()
+                        return@runOnUiThread
+                    }
+                    mainHandler.postDelayed(this, 2_000)
                 }
+            }
+        }
+    }
+
+    private fun resumeStalledImport() {
+        val urls = remoteConfig?.playlistUrls.orEmpty()
+        if (urls.isEmpty()) {
+            catalogImportInProgress = false
+            updateImportProgressBanner(false, 100)
+            return
+        }
+        val importPrefs = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE)
+        importPrefs.edit().putBoolean(ActivationActivity.PREF_IMPORT_IN_PROGRESS, true).apply()
+        updateImportProgressBanner(true, lastImportWatchPercent.coerceAtLeast(0))
+        repository.loadIfChanged(
+            urls,
+            onProgress = { percent ->
+                runOnUiThread {
+                    importPrefs.edit().putInt(ActivationActivity.PREF_IMPORT_PROGRESS_PERCENT, percent).apply()
+                    updateImportProgressBanner(true, percent)
+                }
+            },
+        ) { result ->
+            runOnUiThread {
+                importPrefs.edit().putBoolean(ActivationActivity.PREF_IMPORT_IN_PROGRESS, false).apply()
+                catalogImportInProgress = false
+                updateImportProgressBanner(false, 100)
+                result.onSuccess { loaded -> remoteConfig?.let { applyCatalogSnapshot(loaded, it) } }
             }
         }
     }
@@ -1563,11 +1618,11 @@ class MainActivity : Activity() {
         channelList.layoutManager = androidx.recyclerview.widget.LinearLayoutManager(this)
         channelList.descendantFocusability = ViewGroup.FOCUS_AFTER_DESCENDANTS
         channelList.adapter = catalogAdapter
-        // Mantem mais linhas "prontas" fora da tela (o padrao do Android e
-        // só 2), pra a capinha já estar carregada ou quase quando a linha
-        // vira visível ao rolar, em vez de aparecer em branco por um
-        // instante e só então a imagem chegar.
-        channelList.setItemViewCacheSize(14)
+        // Trava o sistema numa TV box fraca se ficar alto demais -- 14 linhas
+        // extra fora da tela, cada uma disparando carregamento de capinha,
+        // é otimista demais pra hardware limitado. Reduzido pra um meio
+        // termo mais seguro.
+        channelList.setItemViewCacheSize(6)
         channelList.addOnScrollListener(object : RecyclerView.OnScrollListener() {
             override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
                 super.onScrolled(recyclerView, dx, dy)
@@ -2282,10 +2337,19 @@ class MainActivity : Activity() {
                 isFocusable = true
                 isClickable = true
                 setOnClickListener { hotspot.action() }
-                // Removido por completo a pedido do usuário -- nenhum
-                // destaque visual (nem anel, nem branco) quando o item da
-                // Home está focado. Continua clicável/focável normalmente,
-                // só não desenha mais nada em cima do ícone.
+                // O usuário pediu pra tirar o branco/oval grande, mas sem
+                // NENHUM indicador fica impossível saber onde está o foco --
+                // agora é só uma borda fina (2dp, dourada) do tamanho do
+                // ícone principal daquela categoria (não do grupo com
+                // satélites), calculada como recorte dentro da área
+                // clicável maior.
+                val boxSpanW = (hotspot.right - hotspot.left).coerceAtLeast(0.0001f)
+                val boxSpanH = (hotspot.bottom - hotspot.top).coerceAtLeast(0.0001f)
+                val insetLeft = (((hotspot.labelLeft - hotspot.left) / boxSpanW) * boxWidth).toInt().coerceAtLeast(0)
+                val insetTop = (((hotspot.labelTop - hotspot.top) / boxSpanH) * boxHeight).toInt().coerceAtLeast(0)
+                val insetRight = (((hotspot.right - hotspot.labelRight) / boxSpanW) * boxWidth).toInt().coerceAtLeast(0)
+                val insetBottom = (((hotspot.bottom - hotspot.labelBottom) / boxSpanH) * boxHeight).toInt().coerceAtLeast(0)
+                foreground = android.graphics.drawable.InsetDrawable(focusWhiteOverlay(), insetLeft, insetTop, insetRight, insetBottom)
                 tag = PointF(hotspot.anchorX * width, hotspot.anchorY * height)
             }
         }
@@ -2679,11 +2743,13 @@ class MainActivity : Activity() {
         return selector
     }
 
-    // Sem anel/borda -- só um branco translúcido por cima do ícone quando
-    // focado, sem nada quando não está.
+    // A pedido do usuário: nada de branco chapado nem anel/oval grande.
+    // Agora é só uma borda finíssima (2dp) em dourado, do tamanho do
+    // próprio ícone principal (não do grupo com satélites) -- dá pra ver
+    // onde está o foco sem "sujar"/cobrir a tela.
     private fun focusWhiteOverlay(): android.graphics.drawable.Drawable {
         val selector = android.graphics.drawable.StateListDrawable()
-        val focused = GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(0x4DFFFFFF) }
+        val focused = GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), Color.rgb(255, 205, 90)) }
         selector.addState(intArrayOf(android.R.attr.state_focused), focused)
         selector.addState(intArrayOf(), GradientDrawable().apply { shape = GradientDrawable.OVAL; setColor(Color.TRANSPARENT) })
         return selector

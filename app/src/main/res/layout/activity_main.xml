@@ -22,7 +22,7 @@
         <LinearLayout
             android:id="@+id/sideNavigation"
             android:layout_width="0dp"
-            android:layout_weight="0.15"
+            android:layout_weight="0.19"
             android:layout_height="match_parent"
             android:background="#D90D1732"
             android:elevation="12dp"
@@ -89,7 +89,7 @@
             android:id="@+id/channelColumn"
             android:layout_width="0dp"
             android:layout_height="match_parent"
-            android:layout_weight="0.40"
+            android:layout_weight="0.38"
             android:background="#C20D1120"
             android:orientation="vertical"
             android:paddingStart="20dp"
