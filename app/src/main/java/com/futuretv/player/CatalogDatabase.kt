@@ -125,6 +125,21 @@ class CatalogDatabase(context: Context) {
         runCatching { helper.writableDatabase.delete(TABLE, null, null) }
     }
 
+    // Diagnóstico: mostra os group_title EXATOS (e em qual "kind" caíram)
+    // pra qualquer grupo que contenha um dos termos de busca -- usado pra
+    // achar rápido por que uma categoria (ex: Netflix, AMC) não aparece
+    // onde deveria, em vez de tentar adivinhar o formato do painel.
+    fun rawGroupsMatching(terms: List<String>): List<Pair<String, String>> = runCatching {
+        val db = helper.readableDatabase
+        val clause = terms.joinToString(" OR ") { "group_title LIKE ?" }
+        val args = terms.map { "%$it%" }.toTypedArray()
+        db.rawQuery("SELECT DISTINCT group_title, kind FROM $TABLE WHERE $clause LIMIT 60", args).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) add((cursor.getString(0).orEmpty()) to (cursor.getString(1).orEmpty()))
+            }
+        }
+    }.getOrDefault(emptyList())
+
     fun count(): Int = helper.readableDatabase.rawQuery("SELECT COUNT(*) FROM $TABLE", null).use { if (it.moveToFirst()) it.getInt(0) else 0 }
 
     fun stats(): Stats {

@@ -310,6 +310,10 @@ class PlaylistRepository(private val context: Context) {
         }
     }
 
+    fun rawGroupsMatching(terms: List<String>, callback: (List<Pair<String, String>>) -> Unit) {
+        executor.execute { callback(database.rawGroupsMatching(terms)) }
+    }
+
     fun clearCache() {
         cacheFile.delete()
         database.clear()
@@ -1105,12 +1109,11 @@ class PlaylistRepository(private val context: Context) {
         val normalizedGroup = stripDiacritics(group).lowercase().trim()
         val normalizedName = stripDiacritics(name).lowercase()
         if (normalizedGroup.startsWith("filmes |") || normalizedGroup.startsWith("filmes:") || normalizedGroup.startsWith("filmes -")) return MediaKind.MOVIE
-        if (normalizedGroup == "series" ||
-            normalizedGroup.startsWith("series |") ||
-            normalizedGroup.startsWith("series:") ||
-            normalizedGroup.startsWith("series -") ||
-            normalizedGroup.startsWith("series-")
-        ) return MediaKind.SERIES
+        // Regex com \b (borda de palavra) em vez de uma lista fixa de
+        // separadores -- cobre "series | x", "series: x", "series - x",
+        // "series/x", "series x" (só espaço) e "series" sozinho, sem
+        // precisar prever cada separador que um painel diferente use.
+        if (Regex("^series\\b").containsMatchIn(normalizedGroup)) return MediaKind.SERIES
         if (normalizedGroup.contains("24/7 filmes") || normalizedGroup.contains("24/7 seriados") || normalizedGroup.contains("24/7 doramas") || normalizedGroup.contains("24/7 animes") || normalizedGroup.contains("24/7 novelas")) return MediaKind.LIVE
         if (normalizedGroup == "filmes e series") return MediaKind.LIVE
         // Sub-categorias de série que painéis costumam usar SEM o prefixo

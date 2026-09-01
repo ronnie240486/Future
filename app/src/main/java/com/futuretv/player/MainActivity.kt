@@ -5318,6 +5318,7 @@ class MainActivity : Activity() {
             SettingOption(R.drawable.ic_nav_settings, "DNS do painel", "Conexão com o servidor autorizado") { showDnsDialog() },
             SettingOption(R.drawable.ic_nav_movies, "Playlists e cache", "Listas recebidas e armazenamento local") { showPlaylistSettingsDialog() },
             SettingOption(R.drawable.ic_nav_series, "Categorias e ordem", "Categorias ocultas e organização") { showCatalogRulesDialog() },
+            SettingOption(R.drawable.ic_nav_series, "Diagnóstico de categorias", "Ver nome exato dos grupos no catálogo") { showGroupDiagnosticsDialog() },
             SettingOption(R.drawable.ic_nav_voice, "Sincronização", "Atualizações e notificações do painel") { showSyncSettingsDialog() },
             SettingOption(R.drawable.ic_nav_favorites, "Sobre o Future", "Versão e informações do aplicativo") { showAboutDialog() },
             SettingOption(R.drawable.ic_nav_settings, "Testar API do servidor", "Verifique a conexão com o painel") { showServerTestDialog() },
@@ -5933,6 +5934,39 @@ class MainActivity : Activity() {
                 }
             }
         }
+    }
+
+    private fun showGroupDiagnosticsDialog() {
+        val input = android.widget.EditText(this).apply {
+            hint = "netflix, amc, prime, hbo..."
+            setText("netflix,amc,prime,hbo,disney,globoplay,paramount")
+            setTextColor(Color.WHITE)
+            setHintTextColor(Color.rgb(150, 160, 190))
+        }
+        AlertDialog.Builder(this)
+            .setTitle("Diagnóstico de categorias")
+            .setMessage("Digite palavras (separadas por vírgula) pra ver o nome EXATO como está salvo no catálogo, e em qual tipo (LIVE/MOVIE/SERIES) cada grupo caiu.")
+            .setView(input)
+            .setPositiveButton("Buscar") { _, _ ->
+                val terms = input.text.toString().split(",").map { it.trim() }.filter { it.isNotBlank() }
+                if (terms.isEmpty()) return@setPositiveButton
+                repository.rawGroupsMatching(terms) { results ->
+                    runOnUiThread {
+                        val text = if (results.isEmpty()) {
+                            "Nenhum grupo encontrado com esses termos."
+                        } else {
+                            results.joinToString("\n\n") { (group, kind) -> "[$kind]\n\"$group\"" }
+                        }
+                        AlertDialog.Builder(this)
+                            .setTitle("Resultado (${results.size})")
+                            .setMessage(text)
+                            .setPositiveButton("Fechar", null)
+                            .show()
+                    }
+                }
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
     }
 
     private fun showCatalogRulesDialog() {
