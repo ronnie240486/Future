@@ -4201,20 +4201,38 @@ class MainActivity : Activity() {
         val cacheKey = posterCacheKey(entry)
         if (cacheKey in seriesPosterCache || cacheKey in seriesPosterFetching || cacheKey in seriesPosterFailed) return
         seriesPosterFetching += cacheKey
-        repository.enrichMetadata(entry) { metadata ->
+        // A capinha "oficial" pedida pelo usuário é a da TMDB mesmo -- antes
+        // isso vinha só do painel Xtream (enrichMetadata/get_series_info),
+        // que muitos painéis não preenchem direito, deixando o card sem
+        // capinha pra sempre mesmo com a internet funcionando. Agora tenta
+        // a TMDB primeiro (fetchTmdbRating já faz a busca por título e
+        // devolve o poster_path junto com a nota); só cai pro que o painel
+        // manda se a TMDB não achar nada pra esse título.
+        repository.fetchTmdbRating(entry) { rating ->
             runOnUiThread {
-                seriesPosterFetching -= cacheKey
-                val poster = metadata?.backdrop?.takeIf { it.isNotBlank() }
-                if (poster != null) {
-                    seriesPosterCache[cacheKey] = poster
+                val tmdbPoster = rating?.posterUrl?.takeIf { it.isNotBlank() }
+                if (tmdbPoster != null) {
+                    seriesPosterFetching -= cacheKey
+                    seriesPosterCache[cacheKey] = tmdbPoster
                     if (::catalogAdapter.isInitialized) catalogAdapter.refreshItemsMatching { posterCacheKey(it) == cacheKey }
-                } else {
-                    // Sem isso, todo re-bind desse item (rolar, atualizar a
-                    // lista) disparava uma NOVA busca na TMDB pra sempre --
-                    // um item que a TMDB nunca acha ficava tentando
-                    // infinitamente, sobrecarregando a rede e competindo
-                    // com o carregamento normal do resto do app.
-                    seriesPosterFailed += cacheKey
+                    return@runOnUiThread
+                }
+                repository.enrichMetadata(entry) { metadata ->
+                    runOnUiThread {
+                        seriesPosterFetching -= cacheKey
+                        val poster = metadata?.backdrop?.takeIf { it.isNotBlank() }
+                        if (poster != null) {
+                            seriesPosterCache[cacheKey] = poster
+                            if (::catalogAdapter.isInitialized) catalogAdapter.refreshItemsMatching { posterCacheKey(it) == cacheKey }
+                        } else {
+                            // Sem isso, todo re-bind desse item (rolar, atualizar a
+                            // lista) disparava uma NOVA busca na TMDB pra sempre --
+                            // um item que a TMDB nunca acha ficava tentando
+                            // infinitamente, sobrecarregando a rede e competindo
+                            // com o carregamento normal do resto do app.
+                            seriesPosterFailed += cacheKey
+                        }
+                    }
                 }
             }
         }

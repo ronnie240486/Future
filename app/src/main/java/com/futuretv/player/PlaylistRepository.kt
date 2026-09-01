@@ -30,6 +30,7 @@ data class EpisodeDetail(
 data class TmdbRating(
     val score: Double,
     val voteCount: Int,
+    val posterUrl: String = "",
 )
 
 // Estrutura de temporadas de uma série, buscada direto da API Xtream
@@ -640,6 +641,14 @@ class PlaylistRepository(private val context: Context) {
         }
     }
 
+    // A "capinha do TMDB" que os usuários pedem é literalmente essa imagem
+    // (poster_path) -- antes essa função só extraía a nota (vote_average) e
+    // descartava a imagem, enquanto o pôster mostrado nos cards vinha de
+    // outro lugar inteiramente diferente: a API do PRÓPRIO painel Xtream
+    // (get_series_info/get_vod_info, em enrichMetadata/fetchExternalMetadata),
+    // não da TMDB. Se o painel não manda uma imagem boa (comum), o card
+    // ficava sem capinha pra sempre, mesmo com a busca na TMDB funcionando
+    // perfeitamente pra nota.
     private fun fetchTmdbRatingInternal(entry: CatalogEntry, title: String): TmdbRating? {
         val cleanTitle = normalizeMetadataName(title).ifBlank { return null }
         val endpoint = if (entry.kind == MediaKind.SERIES) "tv" else "movie"
@@ -655,8 +664,10 @@ class PlaylistRepository(private val context: Context) {
         val best = results.optJSONObject(0) ?: return null
         val score = best.optDouble("vote_average", 0.0)
         val votes = best.optInt("vote_count", 0)
-        if (score <= 0.0) return null
-        return TmdbRating(score = score, voteCount = votes)
+        val posterPath = firstJsonText(best, "poster_path")
+        val posterUrl = if (posterPath.isNotBlank()) "https://image.tmdb.org/t/p/w500$posterPath" else ""
+        if (score <= 0.0 && posterUrl.isBlank()) return null
+        return TmdbRating(score = score, voteCount = votes, posterUrl = posterUrl)
     }
 
     private fun extractProviderId(streamUrl: String): String = runCatching {
