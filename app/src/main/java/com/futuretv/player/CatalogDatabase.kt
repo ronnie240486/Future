@@ -57,8 +57,8 @@ class CatalogDatabase(context: Context) {
             db.delete(TABLE, null, null)
             val statement = db.compileStatement(
                 "INSERT OR IGNORE INTO $TABLE " +
-                    "(item_key,name,group_title,tvg_id,logo_url,stream_url,kind,quality,series_group,season,episode,year,synopsis,cast,backdrop_url,trailer_url,runtime,is_adult) " +
-                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
+                    "(item_key,name,group_title,tvg_id,logo_url,stream_url,kind,quality,series_group,season,episode,year,synopsis,cast,backdrop_url,trailer_url,runtime,is_adult,series_identity) " +
+                    "VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)"
             )
             feed { entry ->
                 seenTotal++
@@ -220,13 +220,16 @@ class CatalogDatabase(context: Context) {
     private fun querySeriesPageGrouped(group: String, search: String, hidden: Set<String>, sortMode: SortMode, limit: Int, offset: Int, includeAdult: Boolean): List<CatalogEntry> {
         val db = helper.readableDatabase
         val (sourceFilter, sourceArgs) = seriesFilter("source", group, search, hidden, includeAdult)
-        val sourceIdentity = "LOWER(TRIM(CASE WHEN TRIM(source.series_group) <> '' THEN source.series_group ELSE source.name END))"
         val cardOrder = when (sortMode) {
             SortMode.ALPHABETICAL -> "card.is_adult ASC, card.name COLLATE NOCASE ASC"
             SortMode.RECENT, SortMode.RATING -> "card.is_adult ASC, card.rowid ASC"
         }
+        // GROUP BY numa coluna de verdade (series_identity, pré-calculada e
+        // indexada no import) em vez de numa expressão computada -- isso é
+        // o que faz essa consulta conseguir usar índice e não precisar
+        // varrer a tabela de séries inteira toda vez que a tela abre.
         val sql = "SELECT card.* FROM $TABLE card INNER JOIN (" +
-            "SELECT MIN(source.rowid) AS first_rowid FROM $TABLE source WHERE $sourceFilter GROUP BY $sourceIdentity" +
+            "SELECT MIN(source.rowid) AS first_rowid FROM $TABLE source WHERE $sourceFilter GROUP BY source.series_identity" +
             ") roots ON card.rowid = roots.first_rowid ORDER BY $cardOrder LIMIT $limit OFFSET $offset"
         val grouped = runCatching {
             db.rawQuery(sql, sourceArgs.toTypedArray()).use { cursor ->
@@ -430,6 +433,11 @@ class CatalogDatabase(context: Context) {
         statement.bindString(16, e.trailerUrl)
         statement.bindString(17, e.runtime)
         statement.bindLong(18, if (ContentSafety.isAdult(e)) 1L else 0L)
+        // Pré-calculado aqui (uma vez, no import) em vez de na hora da
+        // consulta -- é a mesma conta que antes rodava dentro do GROUP BY
+        // sem índice nenhum, travando a abertura de Séries.
+        val identity = (e.seriesGroup.ifBlank { e.name }).trim().lowercase()
+        statement.bindString(19, identity)
     }
 
     private fun readEntry(c: android.database.Cursor): CatalogEntry = CatalogEntry(
@@ -452,7 +460,7 @@ class CatalogDatabase(context: Context) {
         runtime = c.getString(c.getColumnIndexOrThrow("runtime")),
     )
 
-    private class Helper(context: Context) : SQLiteOpenHelper(context, "future_catalog.db", null, 3) {
+    private class Helper(context: Context) : SQLiteOpenHelper(context, "future_catalog.db", null, 4) {
         init {
             // WAL permite leitores (MainActivity, com sua própria conexão) lerem
             // o banco enquanto outra conexão (o importador, em ActivationActivity)
@@ -477,10 +485,11 @@ class CatalogDatabase(context: Context) {
         }
 
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE $TABLE (item_key TEXT PRIMARY KEY, name TEXT NOT NULL, group_title TEXT NOT NULL, tvg_id TEXT, logo_url TEXT, stream_url TEXT NOT NULL, kind TEXT NOT NULL, quality TEXT, series_group TEXT, season TEXT, episode TEXT, year TEXT, synopsis TEXT, cast TEXT, backdrop_url TEXT, trailer_url TEXT, runtime TEXT, is_adult INTEGER NOT NULL DEFAULT 0)")
+            db.execSQL("CREATE TABLE $TABLE (item_key TEXT PRIMARY KEY, name TEXT NOT NULL, group_title TEXT NOT NULL, tvg_id TEXT, logo_url TEXT, stream_url TEXT NOT NULL, kind TEXT NOT NULL, quality TEXT, series_group TEXT, season TEXT, episode TEXT, year TEXT, synopsis TEXT, cast TEXT, backdrop_url TEXT, trailer_url TEXT, runtime TEXT, is_adult INTEGER NOT NULL DEFAULT 0, series_identity TEXT NOT NULL DEFAULT '')")
             db.execSQL("CREATE INDEX idx_catalog_kind_group ON $TABLE(kind, group_title)")
             db.execSQL("CREATE INDEX idx_catalog_name ON $TABLE(name COLLATE NOCASE)")
             db.execSQL("CREATE INDEX idx_catalog_series_season ON $TABLE(kind, series_group, season)")
+            db.execSQL("CREATE INDEX idx_catalog_series_identity ON $TABLE(kind, series_identity, rowid)")
         }
         override fun onUpgrade(db: SQLiteDatabase, oldVersion: Int, newVersion: Int) {
             if (oldVersion < 2) db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_season ON $TABLE(kind, series_group, season)")
@@ -492,6 +501,23 @@ class CatalogDatabase(context: Context) {
                         arrayOf("%$term%"),
                     )
                 }
+            }
+            if (oldVersion < 4) {
+                // A tela de Séries agrupava episódios calculando uma
+                // expressão (LOWER(TRIM(...))) na hora da consulta, dentro
+                // de um GROUP BY -- SQLite não consegue usar índice nenhum
+                // pra isso, então TODA vez que abria "Séries" ele varria a
+                // tabela inteira de séries computando essa expressão linha
+                // por linha antes de conseguir devolver só a primeira
+                // página. Com um catálogo grande, isso sozinho já explica
+                // "abrir Séries demora muito, fica sem os cards". Agora o
+                // valor já vem pronto (calculado 1x na importação) numa
+                // coluna indexada -- essa migração preenche essa coluna pra
+                // quem já tinha um catálogo salvo (custo único, só nessa
+                // atualização).
+                db.execSQL("ALTER TABLE $TABLE ADD COLUMN series_identity TEXT NOT NULL DEFAULT ''")
+                db.execSQL("UPDATE $TABLE SET series_identity = LOWER(TRIM(CASE WHEN TRIM(series_group) <> '' THEN series_group ELSE name END)) WHERE kind='SERIES'")
+                db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_identity ON $TABLE(kind, series_identity, rowid)")
             }
         }
     }

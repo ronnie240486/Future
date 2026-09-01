@@ -716,7 +716,13 @@ class MainActivity : Activity() {
                 KeyEvent.KEYCODE_DPAD_LEFT -> focusNavigationForCurrentSection()
                 KeyEvent.KEYCODE_DPAD_RIGHT -> focusFirstCategory()
                 KeyEvent.KEYCODE_DPAD_UP -> searchHint.requestFocus()
-                KeyEvent.KEYCODE_DPAD_DOWN -> focusFirstSortButton() || focusFirstCatalogItem()
+                // Se nao tiver nada pra focar (categoria vazia, filtro sem
+                // resultado), sem o "|| true" a tecla vazava pro sistema
+                // de foco padrao do Android, que podia pular pra QUALQUER
+                // view focavel mais proxima na tela -- inclusive pra cima,
+                // sem relacao nenhuma com o que o usuario esperava. Agora
+                // sempre consome a tecla aqui, mesmo sem alvo.
+                KeyEvent.KEYCODE_DPAD_DOWN -> focusFirstSortButton() || focusFirstCatalogItem() || true
                 else -> false
             }
         }
@@ -732,11 +738,15 @@ class MainActivity : Activity() {
                         renderCategories()
                         renderCatalog()
                     }
-                    if (index <= 0) focusNavigationForCurrentSection() else focusCategoryAt(index - 1)
+                    if (index <= 0) focusNavigationForCurrentSection() || true else focusCategoryAt(index - 1) || true
                 }
-                KeyEvent.KEYCODE_DPAD_RIGHT -> if (index >= categoryList.childCount - 1) focusFirstSortButton() || focusFirstCatalogItem() else focusCategoryAt(index + 1)
-                KeyEvent.KEYCODE_DPAD_UP -> searchHint.requestFocus()
-                KeyEvent.KEYCODE_DPAD_DOWN -> focusFirstSortButton() || focusFirstCatalogItem()
+                KeyEvent.KEYCODE_DPAD_RIGHT -> if (index >= categoryList.childCount - 1) {
+                    focusFirstSortButton() || focusFirstCatalogItem() || true
+                } else {
+                    focusCategoryAt(index + 1) || true
+                }
+                KeyEvent.KEYCODE_DPAD_UP -> searchHint.requestFocus() || true
+                KeyEvent.KEYCODE_DPAD_DOWN -> focusFirstSortButton() || focusFirstCatalogItem() || true
                 else -> false
             }
         }
