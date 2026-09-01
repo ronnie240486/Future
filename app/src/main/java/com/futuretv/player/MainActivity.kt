@@ -2273,7 +2273,7 @@ class MainActivity : Activity() {
             Hotspot(0.68f, 0.145f, 0.75f, 0.30f, "movies", openMovies),
             Hotspot(0.732f, 0.417f, 0.80f, 0.58f, "series", openSeries),
             Hotspot(0.65f, 0.64f, 0.73f, 0.80f, "favorites", openFavorites),
-            Hotspot(0.52f, 0.80f, 0.59f, 0.96f, "radios", openRadios),
+            Hotspot(0.518f, 0.801f, 0.576f, 0.935f, "radios", openRadios),
             Hotspot(0.31f, 0.63f, 0.38f, 0.80f, "kids", openKids),
             // Satélites Esporte.
             Hotspot(0.25f, 0.10f, 0.30f, 0.18f, "sports", openSports),
@@ -2331,6 +2331,24 @@ class MainActivity : Activity() {
         }
 
         exactHomeHotspots = mergedHotspots.map { hotspot ->
+            // Indicador visual: um círculo de tamanho FIXO (não depende de
+            // proporção/recorte calculado), sempre centralizado no ícone
+            // principal daquela categoria. A conta anterior (recorte
+            // proporcional dentro da área do grupo inteiro) amplificava
+            // qualquer imprecisão de medida de um jeito não-linear e virava
+            // uma oval torta -- um círculo de tamanho fixo não tem esse
+            // problema, e como o anchor (centro) já foi medido direto na
+            // imagem de fundo, fica bem alinhado com o ícone de verdade.
+            val ringSize = dp(72)
+            val ring = View(this).apply {
+                layoutParams = FrameLayout.LayoutParams(ringSize, ringSize).apply {
+                    leftMargin = (hotspot.anchorX * width - ringSize / 2f).toInt()
+                    topMargin = (hotspot.anchorY * height - ringSize / 2f).toInt()
+                }
+                background = GradientDrawable().apply { shape = GradientDrawable.OVAL; setStroke(dp(2), Color.rgb(255, 205, 90)) }
+                visibility = View.INVISIBLE
+                isDuplicateParentStateEnabled = false
+            }
             View(this).apply {
                 val boxWidth = ((hotspot.right - hotspot.left) * width).toInt().coerceAtLeast(24)
                 val boxHeight = ((hotspot.bottom - hotspot.top) * height).toInt().coerceAtLeast(24)
@@ -2341,23 +2359,12 @@ class MainActivity : Activity() {
                 isFocusable = true
                 isClickable = true
                 setOnClickListener { hotspot.action() }
-                // O usuário pediu pra tirar o branco/oval grande, mas sem
-                // NENHUM indicador fica impossível saber onde está o foco --
-                // agora é só uma borda fina (2dp, dourada) do tamanho do
-                // ícone principal daquela categoria (não do grupo com
-                // satélites), calculada como recorte dentro da área
-                // clicável maior.
-                val boxSpanW = (hotspot.right - hotspot.left).coerceAtLeast(0.0001f)
-                val boxSpanH = (hotspot.bottom - hotspot.top).coerceAtLeast(0.0001f)
-                val insetLeft = (((hotspot.labelLeft - hotspot.left) / boxSpanW) * boxWidth).toInt().coerceAtLeast(0)
-                val insetTop = (((hotspot.labelTop - hotspot.top) / boxSpanH) * boxHeight).toInt().coerceAtLeast(0)
-                val insetRight = (((hotspot.right - hotspot.labelRight) / boxSpanW) * boxWidth).toInt().coerceAtLeast(0)
-                val insetBottom = (((hotspot.bottom - hotspot.labelBottom) / boxSpanH) * boxHeight).toInt().coerceAtLeast(0)
-                foreground = android.graphics.drawable.InsetDrawable(focusWhiteOverlay(), insetLeft, insetTop, insetRight, insetBottom)
+                setOnFocusChangeListener { _, hasFocus -> ring.visibility = if (hasFocus) View.VISIBLE else View.INVISIBLE }
                 tag = PointF(hotspot.anchorX * width, hotspot.anchorY * height)
+                homeOrbitRoot.addView(this)
+                homeOrbitRoot.addView(ring)
             }
         }
-        exactHomeHotspots.forEach(homeOrbitRoot::addView)
         exactHomeHotspots.firstOrNull()?.let { first ->
             first.nextFocusUpId = homeUserHeader.id
             if (::homeSidebarTabs.isInitialized) {
