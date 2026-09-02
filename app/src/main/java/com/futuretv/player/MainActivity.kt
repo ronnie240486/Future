@@ -424,7 +424,7 @@ class MainActivity : Activity() {
             return
         }
         runCatching {
-            val player = constellationSound ?: MediaPlayer.create(this, R.raw.benkirb_shine_7_268909)?.also {
+            val player = constellationSound ?: MediaPlayer.create(this, R.raw.benkirb_shine_1_268902)?.also {
                 it.setVolume(0.82f, 0.82f)
                 it.setOnCompletionListener { completed -> completed.seekTo(0) }
             }?.also { constellationSound = it }
