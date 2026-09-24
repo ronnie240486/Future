@@ -4,6 +4,10 @@
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <!-- Necessária pra WifiManager.connectionInfo devolver o MAC de verdade
+         do aparelho (DeviceIdentifier.resolve) em vez de sempre cair pro
+         fallback derivado do ANDROID_ID. -->
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
     <application
