@@ -9,6 +9,7 @@ import android.view.View
 import android.view.Window
 import android.view.WindowManager
 import android.widget.TextView
+import android.widget.Toast
 import androidx.media3.common.MediaItem
 import androidx.media3.common.PlaybackException
 import androidx.media3.common.Player
@@ -80,13 +81,48 @@ class PlayerActivity : Activity() {
             showError("URL de reprodução não disponível")
             return
         }
+        // BUG corrigido: essa tela cheia (usada por Filmes/Séries) nunca
+        // avisava o painel do que estava tocando -- "Assistindo" dependia
+        // só do preview da tela principal (selectedEntry), que já muda de
+        // valor assim que o usuário sai daqui, então o painel nunca via o
+        // título de verdade sendo reproduzido em tela cheia.
+        if (mac.isNotBlank() && title.isNotBlank()) {
+            AppIntegrationRepository().also { integration ->
+                integration.sendHeartbeat(mac, title)
+                integration.shutdown()
+            }
+        }
         player = ExoPlayer.Builder(this).build().also { exo ->
             playerView.player = exo
             exo.addListener(object : Player.Listener {
                 override fun onPlayerError(error: PlaybackException) {
                     if (mac.isNotBlank()) {
                         val integration = AppIntegrationRepository()
-                        integration.reportPlaybackFailure(mac) { integration.shutdown() }
+                        // BUG corrigido: essa chamada só avisava o painel da
+                        // falha e JOGAVA FORA a resposta -- quando o painel
+                        // troca de lista automaticamente nele mesmo
+                        // (failover), essa resposta vem com
+                        // switch_applied=true, mas o app nunca lia isso, então
+                        // nunca buscava a lista NOVA -- continuava preso na
+                        // lista antiga/quebrada até o usuário reabrir o app
+                        // manualmente. Agora, quando o painel confirma a
+                        // troca, marca uma flag pra MainActivity buscar a
+                        // config atualizada assim que a pessoa voltar (ver
+                        // MainActivity.onResume).
+                        integration.reportPlaybackFailure(mac) { result ->
+                            result.onSuccess { json ->
+                                val root = json.optJSONObject("data") ?: json
+                                val switched = root.optBoolean("switch_applied", root.optBoolean("switchApplied", false))
+                                if (switched) {
+                                    val message = root.optString("message").ifBlank { "Lista alternativa ativada pelo painel" }
+                                    getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).edit()
+                                        .putBoolean(MainActivity.PREF_PENDING_CATALOG_REFRESH, true)
+                                        .apply()
+                                    runOnUiThread { Toast.makeText(this@PlayerActivity, message, Toast.LENGTH_LONG).show() }
+                                }
+                            }
+                            integration.shutdown()
+                        }
                     }
                     showError("Não foi possível reproduzir este conteúdo")
                 }
@@ -168,6 +204,16 @@ class PlayerActivity : Activity() {
         backButton.removeCallbacks(hideBackButton)
         player?.release()
         player = null
+        // Parou de tocar de verdade -- avisa o painel na hora (sentinela
+        // __idle__), em vez de deixar "Assistindo" preso no título deste
+        // filme/episódio até o próximo ciclo de 60s da tela principal.
+        val mac = intent.getStringExtra(EXTRA_MAC).orEmpty()
+        if (mac.isNotBlank()) {
+            AppIntegrationRepository().also { integration ->
+                integration.sendHeartbeat(mac, null)
+                integration.shutdown()
+            }
+        }
         super.onStop()
     }
 

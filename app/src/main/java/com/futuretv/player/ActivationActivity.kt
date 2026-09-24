@@ -11,6 +11,7 @@ import android.os.Handler
 import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
+import android.net.wifi.WifiManager
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -21,8 +22,10 @@ import android.widget.ImageView
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
+import java.net.NetworkInterface
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.util.Collections
 import java.util.Locale
 
 class ActivationActivity : Activity() {
@@ -526,12 +529,83 @@ class ActivationActivity : Activity() {
     }
 }
 
+/**
+ * BUG CRÍTICO corrigido: essa função NUNCA tentava o MAC real do aparelho --
+ * sempre gerava um identificador falso (SHA-256 do ANDROID_ID). Isso batia
+ * com o padrão usado no resto da família de apps (Evolux, Rencia/Supreme)
+ * só por acidente/coincidência de formato, mas o valor mostrado/cadastrado
+ * no painel NUNCA era o MAC de verdade do aparelho -- se o cliente já tinha
+ * o MAC de verdade anotado (da caixa, de outro app, etc.), o painel jamais
+ * ia bater com o que esse app mostrava. Agora tenta, nesta ordem: MAC da
+ * WifiManager -> MAC de alguma NetworkInterface nomeada (wlan0/eth0/wifi0)
+ * -> qualquer interface ativa não-loopback -> só por último, o fallback
+ * estável derivado do ANDROID_ID (SHA-256), igual já era feito antes --
+ * mesmo padrão usado em MacAddressProvider.getFixedMac() no resto da família.
+ */
 object DeviceIdentifier {
+    private const val PLACEHOLDER_1 = "020000000000"
+    private const val PLACEHOLDER_2 = "000000000000"
+
     fun resolve(context: Context): String {
+        val realMac = readRealMac(context)
+        if (realMac != null) return format(realMac)
+        return format(stableFallback(context))
+    }
+
+    private fun readRealMac(context: Context): String? {
+        readFromWifiManager(context)?.let { return it }
+        readFromNamedInterface("wlan0")?.let { return it }
+        readFromNamedInterface("wifi0")?.let { return it }
+        readFromNamedInterface("eth0")?.let { return it }
+        readFromAnyActiveInterface()?.let { return it }
+        return null
+    }
+
+    private fun readFromWifiManager(context: Context): String? = runCatching {
+        val wifiManager = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager ?: return null
+        @Suppress("DEPRECATION")
+        val mac = wifiManager.connectionInfo?.macAddress
+        normalizeCandidate(mac)
+    }.getOrNull()
+
+    private fun readFromNamedInterface(name: String): String? = runCatching {
+        val netInterface = NetworkInterface.getByName(name) ?: return null
+        normalizeCandidate(macBytesToString(netInterface.hardwareAddress))
+    }.getOrNull()
+
+    private fun readFromAnyActiveInterface(): String? = runCatching {
+        for (netInterface in Collections.list(NetworkInterface.getNetworkInterfaces())) {
+            if (netInterface.isLoopback || !netInterface.isUp) continue
+            val candidate = normalizeCandidate(macBytesToString(netInterface.hardwareAddress))
+            if (candidate != null) return candidate
+        }
+        null
+    }.getOrNull()
+
+    private fun macBytesToString(bytes: ByteArray?): String? {
+        if (bytes == null || bytes.size < 6) return null
+        return bytes.joinToString("") { String.format(Locale.US, "%02X", it.toInt() and 0xFF) }
+    }
+
+    /** Filtra MACs placeholder/inválidos que emuladores e alguns aparelhos
+     * devolvem (ex.: "02:00:00:00:00:00" da WifiManager quando sem permissão
+     * de localização, ou tudo zero). */
+    private fun normalizeCandidate(raw: String?): String? {
+        val compact = raw?.filter { it.isLetterOrDigit() }?.uppercase() ?: return null
+        if (compact.length != 12) return null
+        if (compact == PLACEHOLDER_1 || compact == PLACEHOLDER_2) return null
+        return compact
+    }
+
+    private fun stableFallback(context: Context): String {
         val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID).orEmpty()
         val digest = MessageDigest.getInstance("SHA-256").digest(androidId.toByteArray(Charsets.UTF_8))
-        val compact = digest.take(6).joinToString("") { String.format(Locale.US, "%02X", it.toInt() and 0xFF) }
-        return format(compact)
+        val bytes = digest.copyOf(6)
+        // Bit "administrado localmente" ligado -- convenção pra deixar claro
+        // que não é um MAC de fabricante de verdade, evitando colisão com
+        // faixas reais.
+        bytes[0] = ((bytes[0].toInt() and 0xFC) or 0x02).toByte()
+        return bytes.joinToString("") { String.format(Locale.US, "%02X", it.toInt() and 0xFF) }
     }
 
     fun format(compact: String): String = compact.replace(":", "").chunked(2).joinToString(":")

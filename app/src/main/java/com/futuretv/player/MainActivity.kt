@@ -217,6 +217,10 @@ class MainActivity : Activity() {
     private var categoryRequestId = 0
     private val categoryCache = mutableMapOf<MediaKind, List<String>>()
     private var selectedEntry: CatalogEntry? = null
+    // Evita mandar heartbeat imediato repetido pro MESMO canal (ex.: o
+    // usuário segura a seta sem realmente trocar de item) -- só dispara de
+    // novo quando o canal ao vivo em destaque realmente muda.
+    private var lastImmediateHeartbeatKey: String? = null
     private val enrichedMetadata = mutableMapOf<String, CatalogMetadata>()
     // Capa "oficial" (TMDB) por série/filme, pra usar em TODOS os episódios
     // do mesmo grupo na lista/grade -- sem isso, cada episódio mostrava sua
@@ -226,6 +230,12 @@ class MainActivity : Activity() {
     private val seriesPosterFetching = mutableSetOf<String>()
     private val seriesPosterFailed = mutableSetOf<String>()
     private var selectedCategory = "Todos"
+    // BUG corrigido: abrir uma categoria (ex.: "Globo") em Live TV, apertar
+    // voltar (volta pra Home) e entrar de novo em Live TV sempre reiniciava
+    // em "Todos" -- switchSection() zerava selectedCategory incondicionalmente
+    // toda vez. Guarda aqui a última categoria escolhida em cada seção
+    // (Live TV/Filmes/Séries), pra switchSection restaurar em vez de zerar.
+    private val lastCategoryByKind = mutableMapOf<MediaKind, String>()
     private var query = ""
     private var favoritesOnly = false
     // Suprime o "selecionar primeiro item se não achar o selecionado atual na
@@ -3009,7 +3019,11 @@ class MainActivity : Activity() {
             MediaKind.MOVIE -> "◉  Filmes"
             MediaKind.SERIES -> "◉  Séries"
         }
-        selectedCategory = "Todos"
+        // Restaura a última categoria escolhida nesta seção (ver
+        // lastCategoryByKind) em vez de sempre voltar pra "Todos" -- é
+        // sobrescrita mais abaixo por renderCategories() caso essa categoria
+        // não exista mais na lista atual.
+        selectedCategory = lastCategoryByKind[kind] ?: "Todos"
         query = ""
         searchHint.text = "⌕"
         channelHeading.text = when (kind) {
@@ -3210,6 +3224,13 @@ class MainActivity : Activity() {
                             clearPreviewForSection(currentKind)
                         }
                         selectedCategory = category
+                        // Guarda a escolha por seção (Live TV/Filmes/Séries)
+                        // pra sobreviver a sair/voltar (ver switchSection).
+                        // Não guarda a categoria de adulto bloqueada nem
+                        // Favoritos-dentro-de-favoritos como "última escolha".
+                        if (category != ContentSafety.LOCKED_CATEGORY && !favoritesOnly) {
+                            lastCategoryByKind[currentKind] = category
+                        }
                         repaintCategorySelection()
                         renderCatalog()
                         selectFirstVisible()
@@ -4078,6 +4099,18 @@ class MainActivity : Activity() {
         }
         if (requestFocus && selectedEntry?.key != entry.key) stopMiniPlayer()
         selectedEntry = entry
+        // BUG corrigido: o painel só ficava sabendo o canal em destaque no
+        // próximo ciclo de 60s (appIntegration.startBackgroundSync já lê
+        // selectedEntry?.name sozinho, mas só quando o timer dispara) --
+        // trocar de canal muitas vezes rápido dentro desse intervalo dava a
+        // impressão de "não atualiza em tempo real". Agora avisa na hora,
+        // igual ao resto da família de apps, só quando o canal ao vivo em
+        // destaque realmente muda (evita spam ao segurar a seta).
+        if (entry.kind == MediaKind.LIVE && lastImmediateHeartbeatKey != entry.key) {
+            lastImmediateHeartbeatKey = entry.key
+            val mac = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).getString(PREF_MAC_ADDRESS, "").orEmpty()
+            if (mac.isNotBlank()) appIntegration.sendHeartbeat(mac, entry.name)
+        }
         if (::catalogAdapter.isInitialized) catalogAdapter.setSelectedKey(entry.key)
         val editorial = editorialFor(entry)
         val epgPrograms = epgProgramsFor(entry)
@@ -5194,8 +5227,30 @@ class MainActivity : Activity() {
             .show()
     }
 
+    // BUG corrigido: o polling de 60s reconsultava as MESMAS notificações/
+    // comandos enquanto o painel não processava o ACK (que não é
+    // instantâneo) -- sem controle de "já mostrei"/"já executei" por ID
+    // local, o mesmo popup de aviso (ou o mesmo comando, ex.: trocar de
+    // lista de novo) repetia a cada ciclo, às vezes vários seguidos.
+    private fun hasHandledRemoteId(prefKey: String, id: Long): Boolean =
+        getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE).getStringSet(prefKey, emptySet()).orEmpty().contains(id.toString())
+
+    private fun markRemoteIdHandled(prefKey: String, id: Long) {
+        val prefs = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE)
+        val current = prefs.getStringSet(prefKey, emptySet()).orEmpty().toMutableSet()
+        // Evita crescer pra sempre num aparelho que fica meses ligado --
+        // não precisa ser preciso sobre QUAIS ids descarta, só limitar o
+        // tamanho.
+        if (current.size > 500) current.clear()
+        current.add(id.toString())
+        prefs.edit().putStringSet(prefKey, current).apply()
+    }
+
     private fun showRemoteNotifications(mac: String, notifications: List<RemoteNotification>) {
         notifications.forEach { notification ->
+            if (notification.acknowledged) return@forEach
+            if (hasHandledRemoteId(PREF_SHOWN_NOTIFICATION_IDS, notification.id)) return@forEach
+            markRemoteIdHandled(PREF_SHOWN_NOTIFICATION_IDS, notification.id)
             runOnUiThread {
                 AlertDialog.Builder(this)
                     .setTitle(notification.title.ifBlank { "Aviso" })
@@ -5208,6 +5263,8 @@ class MainActivity : Activity() {
 
     private fun showRemoteCommands(mac: String, commands: List<RemoteCommand>) {
         commands.forEach { command ->
+            if (hasHandledRemoteId(PREF_PROCESSED_COMMAND_IDS, command.id)) return@forEach
+            markRemoteIdHandled(PREF_PROCESSED_COMMAND_IDS, command.id)
             runOnUiThread { executeRemoteCommand(mac, command) }
         }
     }
@@ -6416,6 +6473,23 @@ class MainActivity : Activity() {
         }
     }
 
+    override fun onResume() {
+        super.onResume()
+        // BUG corrigido: quando o player detecta falha e o painel troca de
+        // lista automaticamente nele mesmo (failover), essa Activity nunca
+        // ficava sabendo -- PlayerActivity só reportava a falha e descartava
+        // a resposta, sem nunca buscar a playlist NOVA. O catálogo continuava
+        // servindo a lista antiga/quebrada pra sempre, até o usuário reabrir
+        // o app manualmente. PlayerActivity marca essa flag quando o painel
+        // confirma a troca (switch_applied); aqui, ao voltar da tela cheia,
+        // busca a config atualizada (que já traz a playlist nova) na hora.
+        val prefs = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE)
+        if (prefs.getBoolean(PREF_PENDING_CATALOG_REFRESH, false)) {
+            prefs.edit().putBoolean(PREF_PENDING_CATALOG_REFRESH, false).apply()
+            loadRemoteConfiguration()
+        }
+    }
+
     override fun onStop() {
         val hadParentalAccess = parentalUnlocked
         parentalUnlocked = false
@@ -6444,6 +6518,13 @@ class MainActivity : Activity() {
     }
 
     companion object {
+        // Marcada pela PlayerActivity quando o painel confirma que trocou a
+        // lista ativa automaticamente (failover) -- ver onResume().
+        const val PREF_PENDING_CATALOG_REFRESH = "pending_catalog_refresh"
+        // IDs de avisos/comandos já tratados localmente -- ver
+        // hasHandledRemoteId/markRemoteIdHandled.
+        private const val PREF_SHOWN_NOTIFICATION_IDS = "shown_notification_ids"
+        private const val PREF_PROCESSED_COMMAND_IDS = "processed_command_ids"
         private const val PREF_FAVORITES = "favorite_catalog_keys"
         private const val PREF_PROFILES = "future_profiles"
         private const val PREF_ACTIVE_PROFILE_ID = "future_active_profile_id"

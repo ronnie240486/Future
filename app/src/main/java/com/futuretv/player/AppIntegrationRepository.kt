@@ -12,7 +12,15 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
 
-private const val RENCIA_BASE_URL = "https://renciaapp.manus.space"
+// BUG CRÍTICO corrigido: este app só falava com o domínio ANTIGO/depreciado
+// (Manus) -- o painel migrou pro Railway, e o Manus não fala mais a API de
+// verdade pra apps novos (devolve resposta inválida, às vezes nem JSON, em
+// vez de erro claro). Railway é o domínio PRIMÁRIO agora (mesmo usado nos
+// outros apps da família -- Evolux, Rencia/Supreme, Fusion); o Manus fica só
+// como FALLBACK, pra MACs que por algum motivo ainda só estejam cadastrados
+// no painel antigo.
+private const val RENCIA_BASE_URL = "https://renciaapp-production.up.railway.app"
+private const val RENCIA_BASE_URL_FALLBACK = "https://renciaapp.manus.space"
 
 data class RemoteAppConfig(
     val registered: Boolean,
@@ -40,13 +48,17 @@ data class RemoteAppConfig(
     val apkVersion: String,
 )
 
-data class RemoteNotification(val id: Long, val severity: String, val title: String, val message: String)
+data class RemoteNotification(val id: Long, val severity: String, val title: String, val message: String, val acknowledged: Boolean = false)
 data class RemoteCommand(val id: Long, val command: String, val payload: JSONObject)
 data class UpdateInfo(val available: Boolean, val version: String, val url: String)
 data class WatchingInfo(val title: String, val updatedAt: String)
 data class ServerTestResult(val ok: Boolean, val httpCode: Int, val contentType: String, val message: String)
 
 class AppIntegrationRepository {
+    companion object {
+        const val HEARTBEAT_IDLE_SENTINEL = "__idle__"
+    }
+
     private val executor = Executors.newFixedThreadPool(3)
     private val heartbeat: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private var syncFuture: ScheduledFuture<*>? = null
@@ -105,6 +117,13 @@ class AppIntegrationRepository {
                             severity = item.optString("severity", "info"),
                             title = item.optString("title"),
                             message = item.optString("message"),
+                            // BUG corrigido: o painel mantém retornando o
+                            // mesmo aviso até processar o ACK (que não é
+                            // instantâneo) -- sem checar esse campo, o app
+                            // mostrava o MESMO popup de novo a cada 60s
+                            // (documentado: "o APK ignora notificações com
+                            // acknowledged: true").
+                            acknowledged = item.optBoolean("acknowledged", false),
                         ))
                     }
                 }
@@ -174,14 +193,22 @@ class AppIntegrationRepository {
         }
     }
 
+    // BUG corrigido: quando currentContent vinha null/vazio, o parâmetro
+    // current_content simplesmente não era mandado -- pro painel
+    // (rencia_app), "não mandou nada" sempre significa "manter o último
+    // valor mostrado" (pra não apagar por causa de um heartbeat vazio de
+    // manutenção). Isso deixava "Assistindo" preso pra sempre no último
+    // conteúdo, mesmo depois do usuário parar de assistir. O painel já
+    // reconhece essa sentinela reservada (resolveHeartbeatContentUpdate, em
+    // server/heartbeatContent.ts) e limpa "Assistindo" quando ela chega --
+    // igual à correção já feita no resto da família de apps.
     fun sendHeartbeat(mac: String, currentContent: String? = null) {
+        val contentToSend = currentContent?.takeIf { it.isNotBlank() } ?: HEARTBEAT_IDLE_SENTINEL
         val path = buildString {
             append("/api/v5/heartbeat?mac=")
             append(encode(mac))
-            if (!currentContent.isNullOrBlank()) {
-                append("&current_content=")
-                append(encode(currentContent))
-            }
+            append("&current_content=")
+            append(encode(contentToSend))
         }
         getAsync(path) { }
     }
@@ -353,8 +380,17 @@ class AppIntegrationRepository {
         executor.execute { callback(runCatching { request("POST", path, body) }) }
     }
 
+    /** Tenta o Railway (painel atual) primeiro; só cai pro Manus (painel
+     * antigo) se o Railway não responder nada aproveitável (exceção, HTTP
+     * não-2xx ou corpo inválido) -- mesma ordem/lógica usada no resto da
+     * família de apps (Evolux, Rencia/Supreme). */
     private fun request(method: String, path: String, body: JSONObject?): JSONObject {
-        val connection = (URL(RENCIA_BASE_URL + path).openConnection() as HttpURLConnection).apply {
+        runCatching { attemptRequest(RENCIA_BASE_URL, method, path, body) }.getOrNull()?.let { return it }
+        return attemptRequest(RENCIA_BASE_URL_FALLBACK, method, path, body)
+    }
+
+    private fun attemptRequest(baseUrl: String, method: String, path: String, body: JSONObject?): JSONObject {
+        val connection = (URL(baseUrl + path).openConnection() as HttpURLConnection).apply {
             requestMethod = method
             connectTimeout = 7_000
             readTimeout = 12_000
