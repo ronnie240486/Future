@@ -3092,7 +3092,8 @@ class MainActivity : Activity() {
                 runOnUiThread {
                     if (!databaseBackedCatalog || currentKind != requestKind || requestId != categoryRequestId) return@runOnUiThread
                     val normalizedGroups = groups.map { it.ifBlank { "Sem categoria" } }.distinct()
-                    val freshGroups = normalizedGroups.filterNot { it == ContentSafety.LOCKED_CATEGORY }.sorted() +
+                    val naturalOrder = normalizedGroups.filterNot { it == ContentSafety.LOCKED_CATEGORY }.sorted()
+                    val freshGroups = CategoryOrderStore.applyOrder(this, requestKind, naturalOrder) +
                         normalizedGroups.filter { it == ContentSafety.LOCKED_CATEGORY }
                     if (freshGroups == cachedGroups) return@runOnUiThread
                     categoryCache[requestKind] = freshGroups
@@ -3102,7 +3103,8 @@ class MainActivity : Activity() {
             }
             return
         }
-        renderCategoryButtons(favoritesPill + listOf("Todos") + currentItems().map { it.groupTitle.ifBlank { "Sem categoria" } }.distinct().sorted())
+        val naturalOrder = currentItems().map { it.groupTitle.ifBlank { "Sem categoria" } }.distinct().sorted()
+        renderCategoryButtons(favoritesPill + listOf("Todos") + CategoryOrderStore.applyOrder(this, currentKind, naturalOrder))
     }
 
     private fun repaintCategorySelection() {
@@ -5440,7 +5442,7 @@ class MainActivity : Activity() {
             SettingOption(R.drawable.ic_nav_radio, "Som da transição", if (transitionSoundEnabled()) "Efeito sonoro ativado" else "Efeito sonoro desativado") { },
             SettingOption(R.drawable.ic_nav_settings, "DNS do painel", "Conexão com o servidor autorizado") { showDnsDialog() },
             SettingOption(R.drawable.ic_nav_movies, "Playlists e cache", "Listas recebidas e armazenamento local") { showPlaylistSettingsDialog() },
-            SettingOption(R.drawable.ic_nav_series, "Categorias e ordem", "Categorias ocultas e organização") { showCatalogRulesDialog() },
+            SettingOption(R.drawable.ic_nav_series, "Categorias e ordem", "Ocultar, reordenar e organizar categorias") { showCatalogRulesDialog() },
             SettingOption(R.drawable.ic_nav_series, "Diagnóstico de categorias", "Ver nome exato dos grupos no catálogo") { showGroupDiagnosticsDialog() },
             SettingOption(R.drawable.ic_nav_voice, "Sincronização", "Atualizações e notificações do painel") { showSyncSettingsDialog() },
             SettingOption(R.drawable.ic_nav_favorites, "Sobre o Future", "Versão e informações do aplicativo") { showAboutDialog() },
@@ -6093,6 +6095,12 @@ class MainActivity : Activity() {
     }
 
     private fun showCatalogRulesDialog() {
+        val sectionKind = currentKind
+        val sectionLabel = when (sectionKind) {
+            MediaKind.LIVE -> "Canais"
+            MediaKind.MOVIE -> "Filmes"
+            MediaKind.SERIES -> "Séries"
+        }
         val groupInput = EditText(this).apply {
             hint = "Ex.: ADULTOS, RADIOS"
             setSingleLine(false)
@@ -6114,6 +6122,20 @@ class MainActivity : Activity() {
             SortMode.ALPHABETICAL -> alphaRadio.isChecked = true
             SortMode.RATING -> recentRadio.isChecked = true
         }
+        // BUG corrigido (pedido explícito): não existia jeito de organizar
+        // a ORDEM das categorias em si (a lista de "Globo", "SporTV" etc.
+        // na barra lateral sempre saía em ordem alfabética fixa, sem
+        // opção). Mesmo espírito do recurso já usado no Rencia/Supreme
+        // (CategoryOrderStore por lá): a pessoa escreve a ordem que quiser,
+        // separada por vírgula, e ela é salva e aplicada -- categoria nova
+        // que o painel adicionar depois entra no final, sem quebrar nada.
+        val naturalOrderForSection = categoryCache[sectionKind].orEmpty()
+        val currentOrder = CategoryOrderStore.readOrder(this, sectionKind).ifEmpty { naturalOrderForSection }
+        val orderInput = EditText(this).apply {
+            hint = "Ex.: Globo, SporTV, Esportes, Filmes de Ação"
+            setSingleLine(false)
+            setText(currentOrder.joinToString(", "))
+        }
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
             setPadding(28, 0, 28, 0)
@@ -6121,11 +6143,19 @@ class MainActivity : Activity() {
             addView(groupInput)
             addView(TextView(this@MainActivity).apply { text = "Ordenar por:"; setPadding(0, 24, 0, 0) })
             addView(sortGroup)
+            addView(TextView(this@MainActivity).apply { text = "Ordem das categorias de $sectionLabel (separe por vírgula):"; setPadding(0, 24, 0, 0) })
+            addView(orderInput)
         }
+        val scroll = ScrollView(this).apply { addView(content) }
         AlertDialog.Builder(this)
             .setTitle("Categorias e ordem")
-            .setView(content)
+            .setView(scroll)
             .setNegativeButton("Cancelar", null)
+            .setNeutralButton("Restaurar ordem") { _, _ ->
+                CategoryOrderStore.clearOrder(this, sectionKind)
+                Toast.makeText(this, "Ordem original restaurada para $sectionLabel", Toast.LENGTH_SHORT).show()
+                renderCategories()
+            }
             .setPositiveButton("Salvar") { _, _ ->
                 val groups = groupInput.text.toString().split(",", "\\n").map { it.trim() }.filter { it.isNotBlank() }.toSet()
                 val newSortMode = if (alphaRadio.isChecked) SortMode.ALPHABETICAL else SortMode.RECENT
@@ -6134,6 +6164,8 @@ class MainActivity : Activity() {
                     .putString(PREF_SORT_ALPHA, newSortMode.name)
                     .apply()
                 sortMode = newSortMode
+                val newOrder = orderInput.text.toString().split(",", "\\n").map { it.trim() }.filter { it.isNotBlank() }
+                if (newOrder.isEmpty()) CategoryOrderStore.clearOrder(this, sectionKind) else CategoryOrderStore.saveOrder(this, sectionKind, newOrder)
                 renderCategories()
                 renderCatalog()
                 selectFirstVisible()
