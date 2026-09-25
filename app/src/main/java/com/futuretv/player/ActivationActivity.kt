@@ -89,8 +89,27 @@ class ActivationActivity : Activity() {
             )
         setContentView(R.layout.activity_activation)
 
-        mac = DeviceIdentifier.resolve(this)
-        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putString(PREF_MAC_ADDRESS, mac).apply()
+        // BUG CRÍTICO corrigido: antes, TODA vez que a Activity abria, o app
+        // calculava um MAC novo (via DeviceIdentifier.resolve) e sobrescrevia
+        // o que já estava salvo -- mesmo instalando o APK por cima (update),
+        // sem desinstalar. Isso fazia o MAC mudar a cada build novo instalado
+        // (o Android às vezes reatribui o ANDROID_ID quando a assinatura de
+        // debug do build muda, e a MAC real do WiFi pode não estar disponível
+        // em vários aparelhos por restrição do próprio Android), obrigando a
+        // recadastrar o MAC no painel toda hora. Agora, se já existe um MAC
+        // salvo (de uma instalação anterior, ou digitado manualmente em
+        // Configurações > Dispositivo/MAC), ele é sempre reaproveitado -- só
+        // calcula um novo na primeira vez, quando não há nada salvo ainda.
+        // Isso só funciona instalando por cima (update); desinstalar apaga
+        // os dados do app e força um MAC novo na próxima abertura, sem jeito
+        // de evitar isso -- é como o Android funciona.
+        val earlyPrefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
+        val savedMac = earlyPrefs.getString(PREF_MAC_ADDRESS, "").orEmpty()
+        mac = savedMac.ifBlank {
+            DeviceIdentifier.resolve(this).also { resolved ->
+                earlyPrefs.edit().putString(PREF_MAC_ADDRESS, resolved).apply()
+            }
+        }
         val macValue = findViewById<TextView>(R.id.macValue)
         val macFormatted = findViewById<TextView>(R.id.macFormatted)
         macValue.text = mac
