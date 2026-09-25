@@ -283,11 +283,27 @@ class AppIntegrationRepository {
         val blockedStatus = status.lowercase() in setOf("blocked", "bloqueado", "expired", "expirado", "denied", "negado")
         val playlist = firstString(root, "urlM3u8", "playlist_url", "playlistUrl", "m3u_url", "url")
         val epg = firstString(root, "urlEpg", "urlEpg", "epg_url", "url_epg")
-        val playlistUrls = when {
-            playlist.startsWith("http", true) -> listOf(playlist)
+        // BUG CRÍTICO corrigido: antes, se o painel mandasse o campo único
+        // "urlM3u8" (a lista ativa no formato antigo do Maximus) o app usava
+        // SÓ esse valor e IGNORAVA completamente o array "playlist_urls"/
+        // "playlists" com as demais listas cadastradas -- mesmo quando o
+        // painel mandava várias. Resultado: playlistUrls sempre tinha no
+        // máximo 1 item, então (a) o diálogo "Playlists e cache" nunca
+        // mostrava os botões "Lista 1", "Lista 2" etc. pra troca manual
+        // (só aparecem quando há mais de uma URL: ver showPlaylistSettingsDialog),
+        // e (b) o failover local em streamUrls() não tinha pra onde cair se
+        // a lista ativa saísse do ar. Agora a lista ativa (campo único)
+        // continua vindo primeiro/ativa, mas as demais URLs do array são
+        // incluídas em seguida (sem duplicar), habilitando troca manual e
+        // failover de verdade.
+        val playlistArray = when {
             root.optJSONArray("playlist_urls") != null -> parsePlaylistArray(root.optJSONArray("playlist_urls"))
             root.optJSONArray("playlists") != null -> parsePlaylistArray(root.optJSONArray("playlists"))
             else -> emptyList()
+        }
+        val playlistUrls = buildList {
+            if (playlist.startsWith("http", true)) add(playlist)
+            playlistArray.forEach { url -> if (!contains(url)) add(url) }
         }
         return RemoteAppConfig(
             registered = found,
