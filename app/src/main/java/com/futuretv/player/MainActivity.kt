@@ -5755,25 +5755,51 @@ class MainActivity : Activity() {
             .show()
     }
 
+    // BUG corrigido: o diálogo antigo usava setMessage(...) JUNTO com
+    // setSingleChoiceItems(...) no mesmo AlertDialog -- essas duas coisas
+    // disputam a mesma área de conteúdo, e dependendo do tema/Android o
+    // resultado é a lista de rádio (Lista 1, Lista 2...) nunca aparecer de
+    // verdade, mesmo com as URLs certas recebidas do painel (parecia "não
+    // tem lista pra escolher" mesmo quando tinha). Agora usa uma view
+    // própria com ScrollView, então o texto e as opções sempre aparecem,
+    // rolando se precisar. Também mostra o TOTAL de listas que o app
+    // recebeu do painel -- serve de diagnóstico: se o painel manda 4 e
+    // aqui aparecer um número menor, o problema é no cadastro/resposta do
+    // painel pra esse MAC, não neste diálogo.
     private fun showPlaylistSettingsDialog() {
         val urls = remoteConfig?.playlistUrls.orEmpty()
-        val message = buildString {
-            append("Listas recebidas exclusivamente do painel pelo MAC.\\n\\n")
-            if (urls.isEmpty()) append("Nenhuma URL de playlist foi enviada pelo painel.")
-            else append("Selecione a playlist ativa abaixo. As demais permanecem como failover.\\n")
-            append("\\nCache: ").append(if (catalog.databaseBacked) "SQLite paginado ativo" else "memória")
-        }
         var selected = 0
-        val builder = AlertDialog.Builder(this)
-            .setTitle("Playlists e cache")
-            .setMessage(message)
-        if (urls.size > 1) {
-            builder.setSingleChoiceItems(
-                urls.mapIndexed { index, url -> "Lista ${index + 1}  •  ${maskUrl(url)}" }.toTypedArray(),
-                0,
-            ) { _, which -> selected = which }
+        val info = TextView(this).apply {
+            text = buildString {
+                append("Listas recebidas exclusivamente do painel pelo MAC.\n\n")
+                append("Total de listas recebidas pelo app: ${urls.size}\n\n")
+                if (urls.isEmpty()) append("Nenhuma URL de playlist foi enviada pelo painel.")
+                else append("Selecione a playlist ativa abaixo. As demais permanecem como failover.")
+                append("\n\nCache: ").append(if (catalog.databaseBacked) "SQLite paginado ativo" else "memória")
+            }
+            setPadding(0, 0, 0, dp(12))
         }
-        builder
+        val radioGroup = RadioGroup(this).apply { orientation = LinearLayout.VERTICAL }
+        urls.forEachIndexed { index, url ->
+            radioGroup.addView(RadioButton(this).apply {
+                id = View.generateViewId()
+                text = "Lista ${index + 1}  •  ${maskUrl(url)}"
+                isChecked = index == 0
+            })
+        }
+        radioGroup.setOnCheckedChangeListener { group, checkedId ->
+            selected = (0 until group.childCount).firstOrNull { group.getChildAt(it).id == checkedId } ?: selected
+        }
+        val content = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(28), dp(8), dp(28), 0)
+            addView(info)
+            if (urls.isNotEmpty()) addView(radioGroup)
+        }
+        val scroll = ScrollView(this).apply { addView(content) }
+        AlertDialog.Builder(this)
+            .setTitle("Playlists e cache")
+            .setView(scroll)
             .setPositiveButton(if (urls.size > 1) "Aplicar" else "Recarregar") { _, _ ->
                 if (urls.size > 1) loadSelectedPlaylist(urls[selected]) else loadRemoteConfiguration()
             }
