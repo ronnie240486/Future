@@ -121,6 +121,20 @@ class AppIntegrationRepository {
         }
     }
 
+    /** Config PÚBLICA do Future (sem precisar de MAC cadastrado) -- só pra
+     * dar suporte ao botão "Testar API do Painel" funcionar mesmo ANTES da
+     * ativação, com a URL de teste configurada na seção própria do Future
+     * (não mais a do Maximus). Pedido explícito: o cliente precisa poder
+     * testar o painel antes de virar cliente de fato. */
+    fun fetchFutureTestApiUrl(callback: (Result<String>) -> Unit) {
+        getAsync("/api/v5/apps/future/preview") { result ->
+            callback(result.map { json ->
+                val root = json.optJSONObject("data") ?: json
+                root.optString("test_api_url").trim()
+            })
+        }
+    }
+
     fun checkDevice(mac: String, callback: (Result<JSONObject>) -> Unit) {
         getAsync("/api/device/check?mac=${encode(mac)}", callback)
     }
