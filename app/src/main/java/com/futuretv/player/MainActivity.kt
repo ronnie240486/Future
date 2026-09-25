@@ -5768,22 +5768,27 @@ class MainActivity : Activity() {
     // painel pra esse MAC, não neste diálogo.
     private fun showPlaylistSettingsDialog() {
         val urls = remoteConfig?.playlistUrls.orEmpty()
+        val names = remoteConfig?.playlistNames.orEmpty()
         var selected = 0
         val info = TextView(this).apply {
             text = buildString {
                 append("Listas recebidas exclusivamente do painel pelo MAC.\n\n")
-                append("Total de listas recebidas pelo app: ${urls.size}\n\n")
-                if (urls.isEmpty()) append("Nenhuma URL de playlist foi enviada pelo painel.")
+                if (urls.isEmpty()) append("Nenhuma playlist foi enviada pelo painel.")
                 else append("Selecione a playlist ativa abaixo. As demais permanecem como failover.")
                 append("\n\nCache: ").append(if (catalog.databaseBacked) "SQLite paginado ativo" else "memória")
             }
             setPadding(0, 0, 0, dp(12))
         }
+        // Pedido explícito: mostrar só o NOME da lista pro cliente, nunca a
+        // URL (que expõe usuário/senha do provedor da lista). Usa o nome
+        // vindo do painel ("playlist_name"/"name"); sem nome, cai pra
+        // "Lista N" genérico -- nunca mostra a URL.
         val radioGroup = RadioGroup(this).apply { orientation = LinearLayout.VERTICAL }
         urls.forEachIndexed { index, url ->
+            val label = names.getOrNull(index)?.takeIf { it.isNotBlank() } ?: "Lista ${index + 1}"
             radioGroup.addView(RadioButton(this).apply {
                 id = View.generateViewId()
-                text = "Lista ${index + 1}  •  ${maskUrl(url)}"
+                text = label
                 isChecked = index == 0
             })
         }
