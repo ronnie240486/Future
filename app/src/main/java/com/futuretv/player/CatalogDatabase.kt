@@ -52,9 +52,29 @@ class CatalogDatabase(context: Context) {
                 transactionOpen = false
             }
         }
+        // BUG CRÍTICO corrigido: isso fazia db.delete(TABLE, ...) e já
+        // escrevia por cima do catálogo antigo -- se "feed" (baixar+parsear
+        // a lista) falhasse NO MEIO (ex.: queda de rede numa lista grande
+        // cheia de novela/série, ver fetchAndParse em PlaylistRepository),
+        // o catálogo ficava só com o que tinha sido salvo até a queda
+        // (às vezes bem incompleto -- faltando novela inteira, faltando
+        // parte dos filmes). Pior: PlaylistRepository.load() tratava esses
+        // restos como se fossem "o catálogo antigo válido" (recoverCatching
+        // só olha se database.stats().total > 0) e reportava sucesso,
+        // escondendo o problema -- exatamente o "carregou, mas faltando
+        // quase tudo" relatado. Agora o catálogo antigo é guardado intacto
+        // numa tabela de backup (RENAME é praticamente instantâneo no
+        // SQLite, não copia dados) e só é descartado quando a importação
+        // NOVA terminar com sucesso completo; se falhar no meio, o catálogo
+        // antigo COMPLETO volta exatamente como estava, e o erro real sobe
+        // pra quem chamou em vez de ser mascarado.
+        var usingBackup = false
         try {
             beginBatch()
-            db.delete(TABLE, null, null)
+            db.execSQL("DROP TABLE IF EXISTS ${TABLE}_backup")
+            db.execSQL("ALTER TABLE $TABLE RENAME TO ${TABLE}_backup")
+            usingBackup = true
+            db.execSQL(CREATE_TABLE_SQL)
             val statement = db.compileStatement(
                 "INSERT OR IGNORE INTO $TABLE " +
                     "(item_key,name,group_title,tvg_id,logo_url,stream_url,kind,quality,series_group,season,episode,year,synopsis,cast,backdrop_url,trailer_url,runtime,is_adult,series_identity) " +
@@ -100,6 +120,23 @@ class CatalogDatabase(context: Context) {
                 }
             }
             commitBatch()
+            db.execSQL("DROP TABLE IF EXISTS ${TABLE}_backup")
+            usingBackup = false
+        } catch (e: Throwable) {
+            if (transactionOpen) {
+                db.endTransaction()
+                transactionOpen = false
+            }
+            if (usingBackup) {
+                // Descarta a importação nova (parcial/quebrada) e restaura
+                // o catálogo antigo completo -- como statements DDL fora de
+                // transação, cada um confirma na hora.
+                runCatching {
+                    db.execSQL("DROP TABLE IF EXISTS $TABLE")
+                    db.execSQL("ALTER TABLE ${TABLE}_backup RENAME TO $TABLE")
+                }
+            }
+            throw e
         } finally {
             if (transactionOpen) {
                 db.endTransaction()
@@ -113,6 +150,7 @@ class CatalogDatabase(context: Context) {
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_kind_group ON $TABLE(kind, group_title)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_name ON $TABLE(name COLLATE NOCASE)")
             db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_season ON $TABLE(kind, series_group, season)")
+            db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_identity ON $TABLE(kind, series_identity)")
             db.execSQL("PRAGMA synchronous=NORMAL")
             db.rawQuery("PRAGMA busy_timeout=500", null)?.use { it.moveToFirst() }
         }
@@ -485,7 +523,7 @@ class CatalogDatabase(context: Context) {
         }
 
         override fun onCreate(db: SQLiteDatabase) {
-            db.execSQL("CREATE TABLE $TABLE (item_key TEXT PRIMARY KEY, name TEXT NOT NULL, group_title TEXT NOT NULL, tvg_id TEXT, logo_url TEXT, stream_url TEXT NOT NULL, kind TEXT NOT NULL, quality TEXT, series_group TEXT, season TEXT, episode TEXT, year TEXT, synopsis TEXT, cast TEXT, backdrop_url TEXT, trailer_url TEXT, runtime TEXT, is_adult INTEGER NOT NULL DEFAULT 0, series_identity TEXT NOT NULL DEFAULT '')")
+            db.execSQL(CREATE_TABLE_SQL)
             db.execSQL("CREATE INDEX idx_catalog_kind_group ON $TABLE(kind, group_title)")
             db.execSQL("CREATE INDEX idx_catalog_name ON $TABLE(name COLLATE NOCASE)")
             db.execSQL("CREATE INDEX idx_catalog_series_season ON $TABLE(kind, series_group, season)")
@@ -527,5 +565,8 @@ class CatalogDatabase(context: Context) {
         }
     }
 
-    private companion object { const val TABLE = "catalog_items" }
+    private companion object {
+        const val TABLE = "catalog_items"
+        const val CREATE_TABLE_SQL = "CREATE TABLE $TABLE (item_key TEXT PRIMARY KEY, name TEXT NOT NULL, group_title TEXT NOT NULL, tvg_id TEXT, logo_url TEXT, stream_url TEXT NOT NULL, kind TEXT NOT NULL, quality TEXT, series_group TEXT, season TEXT, episode TEXT, year TEXT, synopsis TEXT, cast TEXT, backdrop_url TEXT, trailer_url TEXT, runtime TEXT, is_adult INTEGER NOT NULL DEFAULT 0, series_identity TEXT NOT NULL DEFAULT '')"
+    }
 }
