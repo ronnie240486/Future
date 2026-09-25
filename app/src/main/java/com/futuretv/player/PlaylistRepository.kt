@@ -836,16 +836,43 @@ class PlaylistRepository(private val context: Context) {
     }
 
     private fun fetchAndParse(urlString: String, emit: (CatalogEntry) -> Unit): Int {
-        // Uma única tentativa por URL evita prender a tela em um proxy 522; o failover
-        // percorre as demais playlists e a próxima verificação automática tenta novamente.
-        return fetchAndParseOnce(urlString, emit)
+        // BUG CRÍTICO corrigido: listas grandes (muitas vezes com centenas de
+        // milhares de linhas -- é comum em listas brasileiras cheias de
+        // novela/série) podiam sofrer uma pausa momentânea de rede no meio do
+        // arquivo, maior que o timeout de leitura -- a conexão CAÍA ali, mas
+        // como "uma única tentativa" nunca tentava de novo, o resto do
+        // arquivo (frequentemente séries/novelas, que costumam vir por
+        // último no M3U) nunca era lido. O pior: isso não aparecia como erro
+        // pro usuário -- o catálogo ficava com o que já tinha sido salvo até
+        // a queda (Live TV e parte dos Filmes, por exemplo), dando a
+        // impressão de "carregou, só que faltando quase tudo de novela".
+        // Agora, se a conexão já tinha PROVADO que funciona (emitiu uma
+        // quantidade razoável de entradas antes de cair), tenta de novo do
+        // zero UMA vez com timeout bem maior -- entradas já emitidas na
+        // primeira tentativa são reinseridas com INSERT OR IGNORE
+        // (idempotente, não duplica, só ignora sem custo). Uma falha
+        // IMEDIATA (proxy quebrado, 522, etc., sem emitir nada de
+        // verdade) continua sem retry, exatamente como antes -- o failover
+        // pra próxima URL da lista já cobre esse caso, e insistir aqui só
+        // prenderia a tela sem necessidade.
+        var firstAttemptEmitted = 0
+        val first = runCatching { fetchAndParseOnce(urlString) { entry -> firstAttemptEmitted++; emit(entry) } }
+        first.onSuccess { return it }
+        val failure = first.exceptionOrNull()!!
+        if (firstAttemptEmitted < 50) throw failure
+        return fetchAndParseOnce(urlString, extendedTimeout = true, emit)
     }
 
-    private fun fetchAndParseOnce(urlString: String, emit: (CatalogEntry) -> Unit): Int {
+    private fun fetchAndParseOnce(urlString: String, extendedTimeout: Boolean = false, emit: (CatalogEntry) -> Unit): Int {
         val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
             requestMethod = "GET"
             connectTimeout = 6_000
-            readTimeout = 15_000
+            // BUG CRÍTICO corrigido: 15s era curto demais pra listas
+            // grandes -- qualquer pausa momentânea de rede maior que isso no
+            // meio do download cortava o resto do arquivo (ver comentário em
+            // fetchAndParse). Na tentativa extra (depois de uma queda que já
+            // vinha emitindo entradas de verdade), usa um prazo ainda maior.
+            readTimeout = if (extendedTimeout) 90_000 else 45_000
             setRequestProperty("Accept", "audio/x-mpegurl, application/vnd.apple.mpegurl, text/plain, */*")
             setRequestProperty("Accept-Encoding", "gzip")
             setRequestProperty("User-Agent", "MaximusTVPlayer/1.0 AndroidTV")
