@@ -220,36 +220,53 @@ class ActivationActivity : Activity() {
 
     // Mesmo teste que já existia em Configurações -> "Testar API do servidor"
     // (MainActivity.showServerTestDialog), disponível aqui também: testa a
-    // "test_api_url" cadastrada no painel pra esse MAC, direto na tela de
-    // ativação, sem precisar entrar no app primeiro.
+    // "test_api_url" cadastrada no painel na seção PRÓPRIA do Future.
+    //
+    // BUG corrigido: antes, esse botão só olhava lastFetchedConfig (que só
+    // vem preenchido depois que o MAC já respondeu ALGUMA config) e, pior,
+    // o caminho de fallback (fetchDeviceConfig -> /api/device/check) usado
+    // quando o MAC ainda não está cadastrado não traz test_api_url nenhum
+    // -- então o teste NUNCA funcionava antes do cadastro. Pedido explícito
+    // do usuário: o cliente precisa poder testar a API do painel ANTES de
+    // cadastrar o MAC, pra conhecer o aplicativo. Agora busca direto na
+    // rota pública /api/v5/apps/future/preview (não depende de MAC/cadastro
+    // nenhum) e só cai pro último valor já recebido via fetchConfig se essa
+    // rota nova falhar por algum motivo (painel ainda sem o endpoint, etc.).
     private fun showServerApiTestDialog() {
-        val apiUrl = lastFetchedConfig?.testApiUrl?.trim().orEmpty()
-        if (apiUrl.isBlank() || !apiUrl.startsWith("http", true)) {
-            Toast.makeText(this, "A API do Servidor ainda não foi configurada no painel", Toast.LENGTH_LONG).show()
-            return
-        }
-        Toast.makeText(this, "Testando API do Servidor...", Toast.LENGTH_SHORT).show()
-        integration.testExternalApi(apiUrl) { result ->
+        Toast.makeText(this, "Buscando API do Servidor no painel...", Toast.LENGTH_SHORT).show()
+        integration.fetchFutureTestApiUrl { previewResult ->
             runOnUiThread {
-                result.onSuccess { test ->
-                    val statusLabel = if (test.ok) "online" else "offline"
-                    integration.reportMaximusTestResult(JSONObject().apply {
-                        put("mac", mac)
-                        put("name", "Future")
-                        put("status", statusLabel)
-                        put("source", "maximus")
-                    })
-                    AlertDialog.Builder(this)
-                        .setTitle("Teste da API do Servidor")
-                        .setMessage("Status: $statusLabel\nHTTP: ${test.httpCode}\n${test.message}")
-                        .setPositiveButton("OK", null)
-                        .show()
-                }.onFailure {
-                    AlertDialog.Builder(this)
-                        .setTitle("Falha no teste")
-                        .setMessage(it.message ?: "Não foi possível testar a API")
-                        .setPositiveButton("OK", null)
-                        .show()
+                val apiUrl = previewResult.getOrNull()?.takeIf { it.startsWith("http", true) }
+                    ?: lastFetchedConfig?.testApiUrl?.trim()?.takeIf { it.startsWith("http", true) }
+                    ?: ""
+                if (apiUrl.isBlank()) {
+                    Toast.makeText(this, "A API do Servidor ainda não foi configurada no painel", Toast.LENGTH_LONG).show()
+                    return@runOnUiThread
+                }
+                Toast.makeText(this, "Testando API do Servidor...", Toast.LENGTH_SHORT).show()
+                integration.testExternalApi(apiUrl) { result ->
+                    runOnUiThread {
+                        result.onSuccess { test ->
+                            val statusLabel = if (test.ok) "online" else "offline"
+                            integration.reportMaximusTestResult(JSONObject().apply {
+                                put("mac", mac)
+                                put("name", "Future")
+                                put("status", statusLabel)
+                                put("source", "maximus")
+                            })
+                            AlertDialog.Builder(this)
+                                .setTitle("Teste da API do Servidor")
+                                .setMessage("Status: $statusLabel\nHTTP: ${test.httpCode}\n${test.message}")
+                                .setPositiveButton("OK", null)
+                                .show()
+                        }.onFailure {
+                            AlertDialog.Builder(this)
+                                .setTitle("Falha no teste")
+                                .setMessage(it.message ?: "Não foi possível testar a API")
+                                .setPositiveButton("OK", null)
+                                .show()
+                        }
+                    }
                 }
             }
         }
