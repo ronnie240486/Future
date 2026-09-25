@@ -46,6 +46,11 @@ data class RemoteAppConfig(
     val playlistUrls: List<String>,
     val apkDownloadUrl: String,
     val apkVersion: String,
+    // Nome de cada lista (mesmo índice de playlistUrls), vindo de
+    // "playlist_name"/"name" no painel -- só pra exibir pro cliente em vez
+    // da URL (que tem usuário/senha do provedor). Fica em branco quando o
+    // painel não manda nome (a UI cai pra "Lista N" nesse caso).
+    val playlistNames: List<String> = emptyList(),
 )
 
 data class RemoteNotification(val id: Long, val severity: String, val title: String, val message: String, val acknowledged: Boolean = false)
@@ -63,7 +68,30 @@ class AppIntegrationRepository {
     private val heartbeat: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
     private var syncFuture: ScheduledFuture<*>? = null
 
+    // Ordem de busca da configuração: primeiro a seção PRÓPRIA do Future no
+    // painel (/api/v5/apps/future/config -- tem test_api_url e nome de lista
+    // isolados, não compartilhados com o Maximus), com fallback pro
+    // check_mac.php legado (compartilhado/"gpcpro") sempre que a rota nova
+    // falhar por qualquer motivo: MAC ainda cadastrado como "Maximus" no
+    // painel (a rota nova responde 403 nesse caso -- ver findDeviceMatchByAnyMac
+    // no servidor), MAC ainda não migrado (404), ou qualquer erro de rede.
+    // Isso evita quebrar a ativação de qualquer aparelho que já estava
+    // funcionando antes dessa mudança.
     fun fetchConfig(mac: String, callback: (Result<RemoteAppConfig>) -> Unit) {
+        fetchFutureAppConfig(mac) { futureResult ->
+            futureResult.onSuccess { config ->
+                if (config.registered || config.playlistUrls.isNotEmpty()) {
+                    callback(Result.success(config))
+                } else {
+                    fetchLegacyMaximusConfig(mac, callback)
+                }
+            }.onFailure {
+                fetchLegacyMaximusConfig(mac, callback)
+            }
+        }
+    }
+
+    private fun fetchLegacyMaximusConfig(mac: String, callback: (Result<RemoteAppConfig>) -> Unit) {
         getAsync("/api/v5/check_mac.php?mac=${encode(mac)}") { result ->
             result.onSuccess { json ->
                 val config = parseMaximusConfig(json, mac)
@@ -84,8 +112,11 @@ class AppIntegrationRepository {
         }
     }
 
-    fun fetchLegacyConfig(mac: String, callback: (Result<RemoteAppConfig>) -> Unit) {
-        getAsync("/api/v5/apps/evolux/config?mac=${encode(mac)}") { result ->
+    /** Seção própria do Future no painel -- criada pra não depender mais do
+     * bucket "gpcpro" compartilhado com o Maximus (logo, banner, API de
+     * teste e nome de app agora podem ser configurados só pro Future). */
+    fun fetchFutureAppConfig(mac: String, callback: (Result<RemoteAppConfig>) -> Unit) {
+        getAsync("/api/v5/apps/future/config?mac=${encode(mac)}") { result ->
             callback(result.map { parseGenericConfig(it, mac) })
         }
     }
@@ -296,14 +327,26 @@ class AppIntegrationRepository {
         // continua vindo primeiro/ativa, mas as demais URLs do array são
         // incluídas em seguida (sem duplicar), habilitando troca manual e
         // failover de verdade.
-        val playlistArray = when {
-            root.optJSONArray("playlist_urls") != null -> parsePlaylistArray(root.optJSONArray("playlist_urls"))
-            root.optJSONArray("playlists") != null -> parsePlaylistArray(root.optJSONArray("playlists"))
-            else -> emptyList()
+        val playlistArraySource = when {
+            root.optJSONArray("playlist_urls") != null -> root.optJSONArray("playlist_urls")
+            root.optJSONArray("playlists") != null -> root.optJSONArray("playlists")
+            else -> null
         }
-        val playlistUrls = buildList {
-            if (playlist.startsWith("http", true)) add(playlist)
-            playlistArray.forEach { url -> if (!contains(url)) add(url) }
+        // Nome + URL de cada item do array, na mesma ordem -- pra poder
+        // mostrar só o nome ("Ronnie celular", "Epic"...) pro cliente em vez
+        // da URL completa (que tem usuário/senha do provedor visível).
+        val playlistEntries = parsePlaylistEntries(playlistArraySource)
+        val playlistUrls = mutableListOf<String>()
+        val playlistNames = mutableListOf<String>()
+        if (playlist.startsWith("http", true)) {
+            playlistUrls.add(playlist)
+            playlistNames.add("")
+        }
+        playlistEntries.forEach { (url, name) ->
+            if (url !in playlistUrls) {
+                playlistUrls.add(url)
+                playlistNames.add(name)
+            }
         }
         return RemoteAppConfig(
             registered = found,
@@ -327,6 +370,7 @@ class AppIntegrationRepository {
             testApiUrl = root.optString("test_api_url"),
             epgUrl = epg,
             playlistUrls = playlistUrls,
+            playlistNames = playlistNames,
             apkDownloadUrl = root.optString("apk_download_url"),
             apkVersion = root.optString("apk_version"),
         )
@@ -335,11 +379,23 @@ class AppIntegrationRepository {
     private fun parseGenericConfig(json: JSONObject, fallbackMac: String): RemoteAppConfig {
         val root = json.optJSONObject("data") ?: json
         val icons = root.optJSONObject("icons") ?: JSONObject()
+        val playlistUrls = parsePlaylistArray(root.optJSONArray("playlist_urls"))
+        // "playlist_names" é um array NOVO e adicional no painel, paralelo a
+        // "playlist_urls" (mesmo índice/ordem) -- criado especificamente pra
+        // dar nome de exibição às listas do Future sem expor a URL/senha do
+        // provedor. Sem esse campo (painel antigo/outro app), cai pra lista
+        // de nomes vazios e a UI usa "Lista N" genérico.
+        val namesArray = root.optJSONArray("playlist_names")
+        val playlistNames = if (namesArray != null) {
+            List(playlistUrls.size) { index -> namesArray.optString(index, "") }
+        } else {
+            emptyList()
+        }
         return RemoteAppConfig(
             registered = root.optBoolean("registered", true),
             allowed = root.optBoolean("allowed", true),
             mac = root.optString("mac", fallbackMac),
-            appId = root.optString("app_id", "evolux"),
+            appId = root.optString("app_id", "future"),
             appName = root.optString("app_name", "Future"),
             status = root.optString("status"),
             expiration = root.optString("dataExpiracao", root.optString("expiration")),
@@ -356,9 +412,10 @@ class AppIntegrationRepository {
             dnsUrl = root.optString("dns_url"),
             testApiUrl = root.optString("test_api_url"),
             epgUrl = root.optString("urlEpg", root.optString("epg_url")),
-            playlistUrls = parsePlaylistArray(root.optJSONArray("playlist_urls")),
+            playlistUrls = playlistUrls,
             apkDownloadUrl = root.optString("apk_download_url"),
             apkVersion = root.optString("apk_version"),
+            playlistNames = playlistNames,
         )
     }
 
@@ -385,6 +442,20 @@ class AppIntegrationRepository {
             val item = array.opt(index)
             val value = if (item is JSONObject) firstString(item, "url", "playlist_url", "playlistUrl", "urlM3u8") else item.toString().trim()
             if (value.startsWith("http", true)) add(value)
+        }
+    }
+
+    /** Igual a parsePlaylistArray, mas também traz o nome de cada lista
+     * ("playlist_name"/"name" no painel) pareado com a URL, na mesma ordem
+     * -- pra exibir só o nome pro cliente em vez da URL com usuário/senha. */
+    private fun parsePlaylistEntries(array: JSONArray?): List<Pair<String, String>> = buildList {
+        if (array == null) return@buildList
+        for (index in 0 until array.length()) {
+            val item = array.opt(index)
+            val url = if (item is JSONObject) firstString(item, "url", "playlist_url", "playlistUrl", "urlM3u8") else item.toString().trim()
+            if (!url.startsWith("http", true)) continue
+            val name = if (item is JSONObject) item.optString("playlist_name", item.optString("name", "")).trim() else ""
+            add(url to name)
         }
     }
 
