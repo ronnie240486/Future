@@ -212,6 +212,20 @@
                 android:textStyle="bold" />
 
             <TextView
+                android:id="@+id/testApiButton"
+                android:layout_width="match_parent"
+                android:layout_height="42dp"
+                android:layout_marginTop="8dp"
+                android:background="@drawable/activation_button_secondary"
+                android:clickable="true"
+                android:focusable="true"
+                android:gravity="center"
+                android:text="TESTAR API DO PAINEL"
+                android:textColor="@color/text_secondary"
+                android:textSize="11sp"
+                android:textStyle="bold" />
+
+            <TextView
                 android:id="@+id/activationStatus"
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
