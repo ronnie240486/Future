@@ -27,6 +27,7 @@ import java.net.URLEncoder
 import java.security.MessageDigest
 import java.util.Collections
 import java.util.Locale
+import org.json.JSONObject
 
 class ActivationActivity : Activity() {
     private lateinit var mac: String
@@ -34,6 +35,13 @@ class ActivationActivity : Activity() {
     private lateinit var verifyButton: TextView
     private lateinit var connectButton: TextView
     private lateinit var extraSettingsButton: TextView
+    private lateinit var testApiButton: TextView
+    // Guarda a última config recebida do painel só pra alimentar o botão
+    // "Testar API do painel" sem precisar de outra consulta de rede -- o
+    // mesmo teste que já existia dentro de Configurações (showServerTestDialog
+    // na MainActivity), só que disponível aqui também, igual pedido: o
+    // usuário quer poder testar a API antes mesmo de entrar no app.
+    private var lastFetchedConfig: RemoteAppConfig? = null
     private lateinit var connectionProgress: ProgressBar
     private lateinit var connectionPercent: TextView
     private lateinit var connectionClock: TextView
@@ -91,6 +99,7 @@ class ActivationActivity : Activity() {
         verifyButton = findViewById(R.id.recheckButton)
         connectButton = findViewById(R.id.connectButton)
         extraSettingsButton = findViewById(R.id.extraSettingsButton)
+        testApiButton = findViewById(R.id.testApiButton)
         connectionProgress = findViewById(R.id.connectionProgress)
         connectionPercent = findViewById(R.id.connectionPercent)
         connectionClock = findViewById(R.id.connectionClock)
@@ -106,6 +115,7 @@ class ActivationActivity : Activity() {
             verifyAccess(true)
         }
         extraSettingsButton.setOnClickListener { showExtraSettingsDialog() }
+        testApiButton.setOnClickListener { showServerApiTestDialog() }
         connectButton.requestFocus()
 
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
@@ -135,6 +145,7 @@ class ActivationActivity : Activity() {
                         connectButton,
                         verifyButton,
                         extraSettingsButton,
+                        testApiButton,
                     )
                     val current = targets.indexOf(currentFocus).coerceAtLeast(0)
                     val delta = if (event.keyCode == KeyEvent.KEYCODE_DPAD_UP) -1 else 1
@@ -186,6 +197,43 @@ class ActivationActivity : Activity() {
         val clipboard = getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
         clipboard.setPrimaryClip(ClipData.newPlainText("MAC do dispositivo", mac))
         Toast.makeText(this, "MAC copiado", Toast.LENGTH_SHORT).show()
+    }
+
+    // Mesmo teste que já existia em Configurações -> "Testar API do servidor"
+    // (MainActivity.showServerTestDialog), disponível aqui também: testa a
+    // "test_api_url" cadastrada no painel pra esse MAC, direto na tela de
+    // ativação, sem precisar entrar no app primeiro.
+    private fun showServerApiTestDialog() {
+        val apiUrl = lastFetchedConfig?.testApiUrl?.trim().orEmpty()
+        if (apiUrl.isBlank() || !apiUrl.startsWith("http", true)) {
+            Toast.makeText(this, "A API do Servidor ainda não foi configurada no painel", Toast.LENGTH_LONG).show()
+            return
+        }
+        Toast.makeText(this, "Testando API do Servidor...", Toast.LENGTH_SHORT).show()
+        integration.testExternalApi(apiUrl) { result ->
+            runOnUiThread {
+                result.onSuccess { test ->
+                    val statusLabel = if (test.ok) "online" else "offline"
+                    integration.reportMaximusTestResult(JSONObject().apply {
+                        put("mac", mac)
+                        put("name", "Future")
+                        put("status", statusLabel)
+                        put("source", "maximus")
+                    })
+                    AlertDialog.Builder(this)
+                        .setTitle("Teste da API do Servidor")
+                        .setMessage("Status: $statusLabel\nHTTP: ${test.httpCode}\n${test.message}")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }.onFailure {
+                    AlertDialog.Builder(this)
+                        .setTitle("Falha no teste")
+                        .setMessage(it.message ?: "Não foi possível testar a API")
+                        .setPositiveButton("OK", null)
+                        .show()
+                }
+            }
+        }
     }
 
     private fun showExtraSettingsDialog() {
@@ -374,6 +422,7 @@ class ActivationActivity : Activity() {
                 verifyButton.isEnabled = true
                 connectButton.isEnabled = true
                 result.onSuccess { config ->
+                    lastFetchedConfig = config
                     if (!config.registered || !config.allowed) {
                         setConnectionProgress(20, "Aguardando o cadastro deste MAC no painel...")
                         status.text = "Aguardando cadastro e liberação no painel..."
