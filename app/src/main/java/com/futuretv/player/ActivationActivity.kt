@@ -12,6 +12,7 @@ import android.os.Looper
 import android.os.SystemClock
 import android.provider.Settings
 import android.net.wifi.WifiManager
+import android.text.InputType
 import android.view.KeyEvent
 import android.view.LayoutInflater
 import android.view.View
@@ -19,6 +20,7 @@ import android.view.Window
 import android.view.WindowManager
 import android.widget.EditText
 import android.widget.ImageView
+import android.widget.LinearLayout
 import android.widget.ProgressBar
 import android.widget.TextView
 import android.widget.Toast
@@ -232,43 +234,110 @@ class ActivationActivity : Activity() {
     // rota pública /api/v5/apps/future/preview (não depende de MAC/cadastro
     // nenhum) e só cai pro último valor já recebido via fetchConfig se essa
     // rota nova falhar por algum motivo (painel ainda sem o endpoint, etc.).
+    //
+    // Pedido explícito adicional: esse teste precisa deixar o MAC + nome do
+    // CLIENTE de verdade registrado no painel (não um texto fixo tipo "Seu
+    // teste aqui") -- por isso agora pede nome e telefone/WhatsApp ANTES de
+    // rodar o teste, e manda os dois pro nosso painel
+    // (/api/v5/maximus-test-result, já aceita app_id="future"). O diagnóstico
+    // de conectividade contra a "API do Servidor" continua rodando depois,
+    // igual antes.
     private fun showServerApiTestDialog() {
-        Toast.makeText(this, "Buscando API do Servidor no painel...", Toast.LENGTH_SHORT).show()
+        val container = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            setPadding(dp(24), dp(16), dp(24), dp(4))
+        }
+        val info = TextView(this).apply {
+            text = "Informe seu nome e WhatsApp pra gerar o teste no painel."
+            setTextColor(getColor(R.color.text_secondary))
+            setPadding(0, 0, 0, dp(12))
+        }
+        val nameInput = EditText(this).apply {
+            hint = "Seu nome"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_TEXT or InputType.TYPE_TEXT_VARIATION_PERSON_NAME
+        }
+        val phoneInput = EditText(this).apply {
+            hint = "WhatsApp (DDD + número)"
+            setSingleLine(true)
+            inputType = InputType.TYPE_CLASS_PHONE
+        }
+        container.addView(info)
+        container.addView(nameInput)
+        container.addView(phoneInput)
+
+        AlertDialog.Builder(this)
+            .setTitle("Testar API do Painel")
+            .setView(container)
+            .setPositiveButton("Gerar teste") { _, _ ->
+                val name = nameInput.text.toString().trim()
+                val phone = phoneInput.text.toString().trim()
+                if (name.isBlank() || phone.isBlank()) {
+                    Toast.makeText(this, "Preencha nome e WhatsApp pra gerar o teste", Toast.LENGTH_LONG).show()
+                    return@setPositiveButton
+                }
+                runServerApiTest(name, phone)
+            }
+            .setNegativeButton("Cancelar", null)
+            .show()
+    }
+
+    private fun runServerApiTest(name: String, phone: String) {
+        Toast.makeText(this, "Gerando teste no painel...", Toast.LENGTH_SHORT).show()
+        // Registra MAC + nome + telefone no NOSSO painel primeiro -- é a
+        // nossa própria rota, sempre funciona independente da API externa
+        // abaixo, então o revendedor já vê esse teste no dashboard mesmo que
+        // o diagnóstico de conectividade falhe.
+        integration.reportMaximusTestResult(JSONObject().apply {
+            put("mac", mac)
+            put("name", name)
+            put("phone", phone)
+            put("source", "future")
+            put("app_id", "future")
+        })
         integration.fetchFutureTestApiUrl { previewResult ->
             runOnUiThread {
                 val apiUrl = previewResult.getOrNull()?.takeIf { it.startsWith("http", true) }
                     ?: lastFetchedConfig?.testApiUrl?.trim()?.takeIf { it.startsWith("http", true) }
                     ?: ""
                 if (apiUrl.isBlank()) {
-                    Toast.makeText(this, "A API do Servidor ainda não foi configurada no painel", Toast.LENGTH_LONG).show()
+                    AlertDialog.Builder(this)
+                        .setTitle("Cadastro enviado")
+                        .setMessage("$name foi registrado no painel com esse MAC. A API do Servidor ainda não foi configurada, então não deu pra gerar o teste.")
+                        .setPositiveButton("OK", null)
+                        .show()
                     return@runOnUiThread
                 }
-                Toast.makeText(this, "Testando API do Servidor...", Toast.LENGTH_SHORT).show()
-                integration.testExternalApi(apiUrl) { result ->
+                // Achado no código de verdade do Maximus (MacPanelClient.
+                // registerTestDevice, repo MaximusPlayerNativeExact): o botão
+                // "TESTE" não faz um simples ping -- ele faz POST {"mac": mac}
+                // pra essa mesma "API do Servidor", que devolve dns/usuário/
+                // senha de uma conta de teste JÁ PROVISIONADA, e o app carrega
+                // o catálogo na hora com isso, sem esperar cadastro manual no
+                // nosso painel. Reproduz exatamente esse contrato aqui.
+                integration.requestPanelTrial(apiUrl, mac) { result ->
                     runOnUiThread {
-                        result.onSuccess { test ->
-                            val statusLabel = if (test.ok) "online" else "offline"
-                            // "name" vira o rótulo que aparece pro revendedor no painel
-                            // (nesse fluxo o app não coleta nome/telefone de ninguém, é só
-                            // um clique de teste antes do cadastro) -- e "app_id" marca
-                            // esse cliente de teste como Future de verdade, em vez de cair
-                            // sempre em "Maximus" (comportamento antigo/genérico da rota).
-                            integration.reportMaximusTestResult(JSONObject().apply {
-                                put("mac", mac)
-                                put("name", "Seu teste aqui")
-                                put("status", statusLabel)
-                                put("source", "future")
-                                put("app_id", "future")
-                            })
-                            AlertDialog.Builder(this)
-                                .setTitle("Teste da API do Servidor")
-                                .setMessage("Status: $statusLabel\nHTTP: ${test.httpCode}\n${test.message}")
-                                .setPositiveButton("OK", null)
-                                .show()
+                        result.onSuccess { json ->
+                            val dns = json.optString("dns").trim()
+                            val username = json.optString("username").trim()
+                            val password = json.optString("password").trim()
+                            if (dns.isBlank() || username.isBlank() || password.isBlank()) {
+                                status.text = "Teste solicitado. Aguarde a liberação no painel e toque em VERIFICAR."
+                                status.setTextColor(getColor(R.color.warning))
+                                AlertDialog.Builder(this)
+                                    .setTitle("Teste solicitado")
+                                    .setMessage("$name foi registrado com esse MAC. O painel ainda não devolveu uma conta de teste pronta -- aguarde a liberação e toque em VERIFICAR.")
+                                    .setPositiveButton("OK", null)
+                                    .show()
+                                return@onSuccess
+                            }
+                            val server = if (dns.startsWith("http", true)) dns.trimEnd('/') else "http://${dns.trimEnd('/')}"
+                            val playlistUrl = "$server/get.php?username=${URLEncoder.encode(username, "UTF-8")}&password=${URLEncoder.encode(password, "UTF-8")}&type=m3u_plus&output=mpegts"
+                            loadTrialPlaylistAndOpen(playlistUrl)
                         }.onFailure {
                             AlertDialog.Builder(this)
-                                .setTitle("Falha no teste")
-                                .setMessage(it.message ?: "Não foi possível testar a API")
+                                .setTitle("Não foi possível gerar o teste")
+                                .setMessage("$name foi registrado no painel, mas a API do Servidor não respondeu: ${it.message ?: "erro desconhecido"}")
                                 .setPositiveButton("OK", null)
                                 .show()
                         }
@@ -277,6 +346,60 @@ class ActivationActivity : Activity() {
             }
         }
     }
+
+    /** Carrega o catálogo a partir da playlist de teste devolvida pelo painel
+     * e abre o app -- mesmo caminho de sucesso já usado em verifyAccess(),
+     * só que alimentado por uma conta de teste em vez da lista definitiva do
+     * cliente cadastrado. */
+    private fun loadTrialPlaylistAndOpen(playlistUrl: String) {
+        setConnectionProgress(60, "Teste liberado! Carregando canais, filmes e séries...")
+        status.text = "Teste liberado. Carregando conteúdo..."
+        status.setTextColor(getColor(R.color.success))
+        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_IMPORT_IN_PROGRESS, true).apply()
+        playlistRepository.loadIfChanged(
+            listOf(playlistUrl),
+            onProgress = { progress ->
+                runOnUiThread {
+                    setConnectionProgress(progress, if (progress >= 95) "Finalizando catálogo..." else "Organizando canais, filmes e séries...")
+                }
+                getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putInt(PREF_IMPORT_PROGRESS_PERCENT, progress).apply()
+            },
+            onCatalogReady = { stats ->
+                runOnUiThread {
+                    if (!mainOpened && stats.total > 0) {
+                        setConnectionProgress(86, "Catálogo inicial pronto. Organizando o restante em segundo plano...")
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_ACCESS_ALLOWED, true).apply()
+                        keepImporterAlive = true
+                        openMainActivity(importInProgress = true)
+                    }
+                }
+            },
+            callback = { playlistResult ->
+                runOnUiThread {
+                    playlistResult.onSuccess {
+                        setConnectionProgress(100, "Conectado. Em breve você terá em mãos o melhor conteúdo para assistir.")
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                            .putBoolean(PREF_ACCESS_ALLOWED, true)
+                            .putBoolean(PREF_IMPORT_IN_PROGRESS, false)
+                            .apply()
+                        if (mainOpened) {
+                            keepImporterAlive = false
+                            playlistRepository.shutdown()
+                            finish()
+                        } else {
+                            openMainActivity(importInProgress = false)
+                        }
+                    }.onFailure {
+                        getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit().putBoolean(PREF_IMPORT_IN_PROGRESS, false).apply()
+                        status.text = "Não foi possível carregar o teste: ${it.message.orEmpty()}"
+                        status.setTextColor(getColor(R.color.warning))
+                    }
+                }
+            },
+        )
+    }
+
+    private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
 
     private fun showExtraSettingsDialog() {
         val prefs = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
