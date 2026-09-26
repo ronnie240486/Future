@@ -16,6 +16,12 @@ class CatalogDatabase(context: Context) {
         onCatalogReady: (Stats) -> Unit = {},
     ): Stats {
         val db = helper.writableDatabase
+        // Autocorreção defensiva (ver ensureTableReady/onOpen no Helper):
+        // se por qualquer motivo a tabela ainda não existir neste ponto
+        // (ex.: esta é a primeira escrita depois de abrir o banco e algo
+        // impediu o onOpen de rodar antes), garante que exista ANTES do
+        // ALTER TABLE...RENAME abaixo, que exige a tabela já existente.
+        ensureTableReady(db)
         var total = 0
         var liveCount = 0
         var movieCount = 0
@@ -130,11 +136,25 @@ class CatalogDatabase(context: Context) {
             if (usingBackup) {
                 // Descarta a importação nova (parcial/quebrada) e restaura
                 // o catálogo antigo completo -- como statements DDL fora de
-                // transação, cada um confirma na hora.
-                runCatching {
-                    db.execSQL("DROP TABLE IF EXISTS $TABLE")
-                    db.execSQL("ALTER TABLE ${TABLE}_backup RENAME TO $TABLE")
-                }
+                // transação, cada um confirma na hora. ORDEM importa: antes
+                // isso fazia DROP TABLE catalog_items e SÓ DEPOIS o RENAME de
+                // volta -- se o processo fosse morto (Android matando o app,
+                // queda de energia, etc.) exatamente entre essas duas
+                // instruções, o banco ficava SEM NENHUMA tabela catalog_items
+                // (só a *_backup), e como onCreate() do SQLiteOpenHelper só
+                // roda 1x na vida do arquivo .db, isso nunca se autocorrigia
+                // -- foi exatamente o "no such table: catalog_items" visto em
+                // produção. Agora o catálogo quebrado é renomeado pra um nome
+                // temporário PRIMEIRO (nunca ficamos sem nenhuma tabela
+                // catalog_items de pé nesse meio-tempo) e só descartado depois
+                // que o backup já está de volta no lugar certo; ensureTableReady
+                // (chamado em toda abertura do banco) cobre qualquer estado
+                // intermediário que ainda assim sobrar.
+                runCatching { db.execSQL("DROP TABLE IF EXISTS ${TABLE}_broken") }
+                runCatching { db.execSQL("ALTER TABLE $TABLE RENAME TO ${TABLE}_broken") }
+                runCatching { db.execSQL("ALTER TABLE ${TABLE}_backup RENAME TO $TABLE") }
+                runCatching { db.execSQL("DROP TABLE IF EXISTS ${TABLE}_broken") }
+                ensureTableReady(db)
             }
             throw e
         } finally {
@@ -525,6 +545,26 @@ class CatalogDatabase(context: Context) {
             setWriteAheadLoggingEnabled(true)
         }
 
+        override fun onOpen(db: SQLiteDatabase) {
+            super.onOpen(db)
+            // Autocorreção: catalog_items pode ter sumido se um processo
+            // anterior (app morto pelo sistema Android, crash, energia,
+            // etc.) foi encerrado bem no meio da janela entre o
+            // "DROP TABLE IF EXISTS catalog_items" e o
+            // "ALTER TABLE catalog_items_backup RENAME TO catalog_items"
+            // que restaura o backup dentro do catch{} de replaceStreaming()
+            // -- são duas instruções DDL separadas fora de transação, cada
+            // uma confirma na hora, então uma morte do processo exatamente
+            // ali deixa o banco SEM catalog_items (só a *_backup, se a
+            // restauração nem chegou a rodar, ou nem essa, se a própria
+            // restauração também foi interrompida). onCreate() do
+            // SQLiteOpenHelper só roda 1x na vida inteira do arquivo .db,
+            // então nunca ia se autocurar sozinho depois disso -- por isso
+            // essa checagem roda em toda ABERTURA do banco, não só na
+            // criação, e cobre tanto leitura quanto escrita.
+            ensureTableReady(db)
+        }
+
         override fun onConfigure(db: SQLiteDatabase) {
             super.onConfigure(db)
             // Antes esperava até 5s pra QUALQUER consulta que esbarrasse numa
@@ -584,5 +624,28 @@ class CatalogDatabase(context: Context) {
     private companion object {
         const val TABLE = "catalog_items"
         const val CREATE_TABLE_SQL = "CREATE TABLE $TABLE (item_key TEXT PRIMARY KEY, name TEXT NOT NULL, group_title TEXT NOT NULL, tvg_id TEXT, logo_url TEXT, stream_url TEXT NOT NULL, kind TEXT NOT NULL, quality TEXT, series_group TEXT, season TEXT, episode TEXT, year TEXT, synopsis TEXT, cast TEXT, backdrop_url TEXT, trailer_url TEXT, runtime TEXT, is_adult INTEGER NOT NULL DEFAULT 0, series_identity TEXT NOT NULL DEFAULT '')"
+
+        fun tableExists(db: SQLiteDatabase, name: String): Boolean = runCatching {
+            db.rawQuery("SELECT 1 FROM sqlite_master WHERE type='table' AND name=? LIMIT 1", arrayOf(name)).use { it.moveToFirst() }
+        }.getOrDefault(false)
+
+        // Ver comentário em Helper.onOpen(): restaura o backup se ele
+        // sobreviveu, ou recria a tabela vazia do zero (equivalente ao que
+        // onCreate() faria) se nem o backup restou. Nunca lança -- pior
+        // caso é um catálogo vazio (usuário refaz a importação normalmente),
+        // nunca um crash "no such table".
+        fun ensureTableReady(db: SQLiteDatabase) {
+            if (tableExists(db, TABLE)) return
+            if (tableExists(db, "${TABLE}_backup")) {
+                runCatching { db.execSQL("ALTER TABLE ${TABLE}_backup RENAME TO $TABLE") }
+            }
+            if (!tableExists(db, TABLE)) {
+                runCatching { db.execSQL(CREATE_TABLE_SQL) }
+                runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_kind_group ON $TABLE(kind, group_title)") }
+                runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_name ON $TABLE(name COLLATE NOCASE)") }
+                runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_season ON $TABLE(kind, series_group, season)") }
+                runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_identity ON $TABLE(kind, series_identity)") }
+            }
+        }
     }
 }
