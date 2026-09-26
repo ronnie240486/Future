@@ -267,7 +267,7 @@ class ActivationActivity : Activity() {
         container.addView(phoneInput)
 
         AlertDialog.Builder(this)
-            .setTitle("Testar API do Painel")
+            .setTitle("Seu teste aqui")
             .setView(container)
             .setPositiveButton("Gerar teste") { _, _ ->
                 val name = nameInput.text.toString().trim()
