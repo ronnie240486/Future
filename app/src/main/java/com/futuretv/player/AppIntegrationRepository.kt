@@ -268,26 +268,50 @@ class AppIntegrationRepository {
     fun requestPanelTrial(urlString: String, mac: String, callback: (Result<JSONObject>) -> Unit) {
         executor.execute {
             callback(runCatching {
-                val connection = (URL("$urlString?mac=${encode(mac)}").openConnection() as HttpURLConnection).apply {
-                    requestMethod = "POST"
-                    doOutput = true
-                    connectTimeout = 8_000
-                    readTimeout = 15_000
-                    setRequestProperty("Accept", "application/json, text/plain, */*")
-                    setRequestProperty("Content-Type", "application/json")
-                    setRequestProperty("User-Agent", "MaximusTVPlayer/1.0 AndroidTV")
-                }
-                OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use {
-                    it.write(JSONObject().put("mac", mac).toString())
-                }
-                val status = connection.responseCode
-                val text = (if (status in 200..299) connection.inputStream else connection.errorStream)
-                    ?.bufferedReader(Charsets.UTF_8)?.use(BufferedReader::readText).orEmpty().trim()
-                connection.disconnect()
-                if (status !in 200..299) error("Integração HTTP $status")
-                if (text.isBlank()) JSONObject() else JSONObject(text)
+                val separator = if (urlString.contains("?")) "&" else "?"
+                requestPanelTrialAt("$urlString${separator}mac=${encode(mac)}", mac, redirectsLeft = 5)
             })
         }
+    }
+
+    // BUG corrigido: `HttpURLConnection` não segue redirect automaticamente
+    // num POST (só faz isso sozinho pra GET/HEAD) -- então uma "API do
+    // Servidor" que redireciona (301/302/303/307/308, muito comum quando o
+    // domínio força "https"/"www" ou trocou de rota) devolvia só a página de
+    // redirecionamento em vez do JSON de verdade com dns/usuário/senha, e o
+    // teste falhava com "Integração HTTP 301" mesmo o servidor estando
+    // perfeitamente no ar. Agora segue o "Location" manualmente (limitado a
+    // 5 saltos, pra nunca entrar num loop infinito). "mac" só é anexado na
+    // URL UMA vez, na chamada inicial -- o redirect é seguido com a
+    // "Location" tal como o servidor mandou (evita duplicar "?mac=" se a
+    // URL de destino já vier com sua própria query string).
+    private fun requestPanelTrialAt(urlString: String, mac: String, redirectsLeft: Int): JSONObject {
+        val connection = (URL(urlString).openConnection() as HttpURLConnection).apply {
+            requestMethod = "POST"
+            doOutput = true
+            instanceFollowRedirects = false
+            connectTimeout = 8_000
+            readTimeout = 15_000
+            setRequestProperty("Accept", "application/json, text/plain, */*")
+            setRequestProperty("Content-Type", "application/json")
+            setRequestProperty("User-Agent", "MaximusTVPlayer/1.0 AndroidTV")
+        }
+        OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use {
+            it.write(JSONObject().put("mac", mac).toString())
+        }
+        val status = connection.responseCode
+        if (status in 300..399) {
+            val location = connection.getHeaderField("Location")
+            connection.disconnect()
+            if (location.isNullOrBlank() || redirectsLeft <= 0) error("Integração HTTP $status")
+            val nextUrl = if (location.startsWith("http", true)) location else URL(URL(urlString), location).toString()
+            return requestPanelTrialAt(nextUrl, mac, redirectsLeft - 1)
+        }
+        val text = (if (status in 200..299) connection.inputStream else connection.errorStream)
+            ?.bufferedReader(Charsets.UTF_8)?.use(BufferedReader::readText).orEmpty().trim()
+        connection.disconnect()
+        if (status !in 200..299) error("Integração HTTP $status")
+        return if (text.isBlank()) JSONObject() else JSONObject(text)
     }
 
     // BUG corrigido: quando currentContent vinha null/vazio, o parâmetro
