@@ -248,11 +248,17 @@ class ActivationActivity : Activity() {
                     runOnUiThread {
                         result.onSuccess { test ->
                             val statusLabel = if (test.ok) "online" else "offline"
+                            // "name" vira o rótulo que aparece pro revendedor no painel
+                            // (nesse fluxo o app não coleta nome/telefone de ninguém, é só
+                            // um clique de teste antes do cadastro) -- e "app_id" marca
+                            // esse cliente de teste como Future de verdade, em vez de cair
+                            // sempre em "Maximus" (comportamento antigo/genérico da rota).
                             integration.reportMaximusTestResult(JSONObject().apply {
                                 put("mac", mac)
-                                put("name", "Future")
+                                put("name", "Seu teste aqui")
                                 put("status", statusLabel)
-                                put("source", "maximus")
+                                put("source", "future")
+                                put("app_id", "future")
                             })
                             AlertDialog.Builder(this)
                                 .setTitle("Teste da API do Servidor")
