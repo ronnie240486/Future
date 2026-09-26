@@ -142,17 +142,33 @@ class CatalogDatabase(context: Context) {
                 db.endTransaction()
                 transactionOpen = false
             }
+            // BUG CRÍTICO corrigido: em Kotlin (igual em Java), se o bloco
+            // "finally" lançar uma exceção, ela SUBSTITUI qualquer retorno
+            // normal do "try" -- mesmo que a importação inteira tenha
+            // funcionado perfeitamente, um erro aqui na hora de recriar os
+            // índices (ex.: "no such table: catalog_items", visto quando
+            // outra conexão no mesmo arquivo -- a MainActivity, que abre e
+            // pode acessar o catálogo em paralelo enquanto esse import de
+            // fundo ainda está rodando -- disputa a mesma tabela num
+            // instante ruim) transformava um import BEM-SUCEDIDO em erro
+            // pro usuário ("Não foi possível carregar o teste"). Recriar
+            // índice é uma otimização de leitura, não dado -- se falhar
+            // agora, o catálogo continua 100% consultável (só um pouco mais
+            // lento até a próxima importação recriar o índice de novo), então
+            // cada CREATE INDEX roda isolado em runCatching pra nunca
+            // esconder um import que deu certo atrás de um erro secundário.
+            //
             // Recriar índices precisa de acesso exclusivo por um instante --
             // sobe o busy_timeout só por esse momento específico, e volta pro
             // padrão curto (500ms) logo depois, pra não afetar consultas
             // normais feitas em qualquer outro momento da importação.
-            db.rawQuery("PRAGMA busy_timeout=5000", null)?.use { it.moveToFirst() }
-            db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_kind_group ON $TABLE(kind, group_title)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_name ON $TABLE(name COLLATE NOCASE)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_season ON $TABLE(kind, series_group, season)")
-            db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_identity ON $TABLE(kind, series_identity)")
-            db.execSQL("PRAGMA synchronous=NORMAL")
-            db.rawQuery("PRAGMA busy_timeout=500", null)?.use { it.moveToFirst() }
+            runCatching { db.rawQuery("PRAGMA busy_timeout=5000", null)?.use { it.moveToFirst() } }
+            runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_kind_group ON $TABLE(kind, group_title)") }
+            runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_name ON $TABLE(name COLLATE NOCASE)") }
+            runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_season ON $TABLE(kind, series_group, season)") }
+            runCatching { db.execSQL("CREATE INDEX IF NOT EXISTS idx_catalog_series_identity ON $TABLE(kind, series_identity)") }
+            runCatching { db.execSQL("PRAGMA synchronous=NORMAL") }
+            runCatching { db.rawQuery("PRAGMA busy_timeout=500", null)?.use { it.moveToFirst() } }
         }
         return Stats(total, liveCount, movieCount, seriesCount, groups.size, seenTotal, rejectedDuplicate)
     }
