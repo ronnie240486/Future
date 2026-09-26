@@ -442,7 +442,8 @@ class ActivationActivity : Activity() {
     // valendo; o painel/API do Servidor continuam sendo a fonte de verdade
     // de quando o teste realmente expira de verdade.
     private fun resolveTrialExpiryMillis(expiresAtRaw: String): Long {
-        val fallback = System.currentTimeMillis() + DEFAULT_TRIAL_DURATION_MS
+        val now = System.currentTimeMillis()
+        val fallback = now + DEFAULT_TRIAL_DURATION_MS
         if (expiresAtRaw.isBlank()) return fallback
         val patterns = listOf(
             "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
@@ -455,7 +456,15 @@ class ActivationActivity : Activity() {
             val parsed = runCatching {
                 SimpleDateFormat(pattern, Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(expiresAtRaw)?.time
             }.getOrNull()
-            if (parsed != null && parsed > 0L) return parsed
+            // Só aceita o valor devolvido pela API se ele apontar pra um
+            // instante MINIMAMENTE no futuro. Proteção contra um formato tipo
+            // "yyyy-MM-dd" (só a data, sem hora) casando com o padrão errado e
+            // virando meia-noite UTC -- pra um teste gerado depois da meia-noite
+            // UTC, isso "expiraria" o teste no instante em que ele é criado,
+            // fazendo exatamente o bypass que essa função existe pra garantir
+            // nunca disparar. Se cair nesse caso, é mais seguro usar o prazo
+            // padrão do que travar um teste recém-gerado.
+            if (parsed != null && parsed > now + MIN_ACCEPTABLE_TRIAL_WINDOW_MS) return parsed
         }
         return fallback
     }
@@ -812,6 +821,10 @@ class ActivationActivity : Activity() {
         // Usado só quando a API do Servidor não devolve "expiresAt" -- janela
         // de tolerância local padrão pra um teste que não informou validade.
         private const val DEFAULT_TRIAL_DURATION_MS = 24L * 60 * 60 * 1000
+        // Ver resolveTrialExpiryMillis: um "expiresAt" que aponte pra menos
+        // que isso no futuro é tratado como não confiável (provável erro de
+        // formato), não como "teste já quase vencido".
+        private const val MIN_ACCEPTABLE_TRIAL_WINDOW_MS = 5L * 60 * 1000
     }
 }
 
