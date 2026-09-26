@@ -27,8 +27,10 @@ import android.widget.Toast
 import java.net.NetworkInterface
 import java.net.URLEncoder
 import java.security.MessageDigest
+import java.text.SimpleDateFormat
 import java.util.Collections
 import java.util.Locale
+import java.util.TimeZone
 import org.json.JSONObject
 
 class ActivationActivity : Activity() {
@@ -144,10 +146,30 @@ class ActivationActivity : Activity() {
         val manualUser = prefs.getString(PREF_MANUAL_USER, "").orEmpty()
         val manualPassword = prefs.getString(PREF_MANUAL_PASSWORD, "").orEmpty()
         val manualConfigured = manualDns.isNotBlank() && manualUser.isNotBlank() && manualPassword.isNotBlank()
+        // BUG corrigido: "SEU TESTE AQUI" carregava o catálogo de teste e abria
+        // o app na hora, mas PREF_ACCESS_ALLOWED nunca era LIDO em lugar nenhum
+        // -- então, ao fechar e reabrir o app, o onCreate ignorava que um teste
+        // já tinha sido liberado e voltava a chamar verifyAccess(false) na cara
+        // dura, que consulta o painel de VERDADE (não a API do Servidor do
+        // teste). Como um teste não é um dispositivo "assinante" registrado no
+        // nosso painel (e não deveria ser -- ver isTrialActiveFor em
+        // MainActivity), a resposta ficava sempre "aguardando cadastro",
+        // travando pra sempre na tela de MAC mesmo com o catálogo do teste já
+        // salvo e pronto no SQLite local. Agora, enquanto o teste ainda estiver
+        // dentro da validade (PREF_TRIAL_ACTIVE_UNTIL) e for do mesmo MAC, reabre
+        // direto na MainActivity reaproveitando esse catálogo já baixado.
+        val trialStillActive = prefs.getBoolean(PREF_ACCESS_ALLOWED, false) &&
+            prefs.getString(PREF_TRIAL_MAC, "").equals(mac, ignoreCase = true) &&
+            prefs.getLong(PREF_TRIAL_ACTIVE_UNTIL, 0L) > System.currentTimeMillis()
         if (prefs.getString(PREF_SOURCE_MODE, SOURCE_PANEL) == SOURCE_MANUAL && manualConfigured) {
             // Configuração extra já salva: conecta direto, sem depender do painel/MAC.
             setConnectionProgress(0, "Conectando com a configuração extra (DNS/usuário/senha)...")
             connectManual(manualDns, manualUser, manualPassword, showProgress = false)
+        } else if (trialStillActive) {
+            setConnectionProgress(90, "Teste ainda válido. Abrindo Future...")
+            status.text = "Teste ainda válido. Abrindo Future..."
+            status.setTextColor(getColor(R.color.success))
+            openMainActivity(importInProgress = false)
         } else {
             setConnectionProgress(0, "Aguardando conexão com o painel...")
             verifyAccess(false)
@@ -333,6 +355,19 @@ class ActivationActivity : Activity() {
                             }
                             val server = if (dns.startsWith("http", true)) dns.trimEnd('/') else "http://${dns.trimEnd('/')}"
                             val playlistUrl = "$server/get.php?username=${URLEncoder.encode(username, "UTF-8")}&password=${URLEncoder.encode(password, "UTF-8")}&type=m3u_plus&output=mpegts"
+                            // Marca esse MAC como "em teste local válido até X" ANTES de
+                            // abrir a MainActivity. Sem isso, ela chama fetchConfig(mac) no
+                            // painel de verdade (nosso próprio painel, não a API do
+                            // Servidor) pra decidir se libera a tela -- e como um teste
+                            // recém-gerado ainda NÃO é um dispositivo "autorizado"/assinante
+                            // de verdade lá, a resposta correta do painel é
+                            // registered=false/allowed=false, o que fazia a MainActivity
+                            // travar o próprio teste que acabou de ser liberado com o popup
+                            // "Acesso indisponível" -- ver isTrialActiveFor() em MainActivity.
+                            getSharedPreferences(PREFS_NAME, MODE_PRIVATE).edit()
+                                .putLong(PREF_TRIAL_ACTIVE_UNTIL, resolveTrialExpiryMillis(json.optString("expiresAt").trim()))
+                                .putString(PREF_TRIAL_MAC, mac)
+                                .apply()
                             loadTrialPlaylistAndOpen(playlistUrl)
                         }.onFailure {
                             AlertDialog.Builder(this)
@@ -397,6 +432,32 @@ class ActivationActivity : Activity() {
                 }
             },
         )
+    }
+
+    // Tenta ler a validade real do teste devolvida pela API do Servidor
+    // (campo opcional "expiresAt", visto no contrato do Maximus). Se vier
+    // vazio ou num formato que não bate com nenhum padrão comum, usa um
+    // prazo padrão -- é só uma janela de tolerância local pra não travar o
+    // teste com "Acesso indisponível" enquanto ele ainda deveria estar
+    // valendo; o painel/API do Servidor continuam sendo a fonte de verdade
+    // de quando o teste realmente expira de verdade.
+    private fun resolveTrialExpiryMillis(expiresAtRaw: String): Long {
+        val fallback = System.currentTimeMillis() + DEFAULT_TRIAL_DURATION_MS
+        if (expiresAtRaw.isBlank()) return fallback
+        val patterns = listOf(
+            "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'",
+            "yyyy-MM-dd'T'HH:mm:ss'Z'",
+            "yyyy-MM-dd'T'HH:mm:ssXXX",
+            "yyyy-MM-dd HH:mm:ss",
+            "yyyy-MM-dd",
+        )
+        for (pattern in patterns) {
+            val parsed = runCatching {
+                SimpleDateFormat(pattern, Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }.parse(expiresAtRaw)?.time
+            }.getOrNull()
+            if (parsed != null && parsed > 0L) return parsed
+        }
+        return fallback
     }
 
     private fun dp(value: Int): Int = (value * resources.displayMetrics.density).toInt()
@@ -740,6 +801,17 @@ class ActivationActivity : Activity() {
         const val PREF_MANUAL_PASSWORD = "manual_password"
         const val SOURCE_PANEL = "panel"
         const val SOURCE_MANUAL = "manual"
+
+        // Controle do teste gerado por "SEU TESTE AQUI" (ver runServerApiTest):
+        // guarda até quando o teste local vale e pra qual MAC foi liberado, pra
+        // MainActivity saber que não deve travar com "Acesso indisponível"
+        // quando o painel (corretamente) ainda não marca esse MAC como
+        // assinante autorizado -- ver loadRemoteConfiguration/isTrialActiveFor.
+        const val PREF_TRIAL_ACTIVE_UNTIL = "trial_active_until"
+        const val PREF_TRIAL_MAC = "trial_mac"
+        // Usado só quando a API do Servidor não devolve "expiresAt" -- janela
+        // de tolerância local padrão pra um teste que não informou validade.
+        private const val DEFAULT_TRIAL_DURATION_MS = 24L * 60 * 60 * 1000
     }
 }
 

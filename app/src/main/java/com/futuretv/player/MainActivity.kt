@@ -4951,6 +4951,17 @@ class MainActivity : Activity() {
             runOnUiThread {
                 result.onSuccess { config ->
                     if (!config.registered || !config.allowed) {
+                        if (isTrialActiveFor(mac)) {
+                            // Teste local (botão "SEU TESTE AQUI" em ActivationActivity)
+                            // ainda dentro da validade: o catálogo já foi baixado e está
+                            // no SQLite local (restoreCachedCatalogIfNeeded cuida de
+                            // mostrar). O painel de VERDADE corretamente ainda não marca
+                            // esse MAC como assinante registrado/autorizado -- um teste não
+                            // deveria virar isso sozinho -- então não faz sentido travar a
+                            // tela com "Acesso indisponível" por cima do próprio teste que
+                            // acabou de ser liberado.
+                            return@onSuccess
+                        }
                         showAccessUnavailable(config)
                         return@onSuccess
                     }
@@ -5218,6 +5229,18 @@ class MainActivity : Activity() {
                 if (!databaseBackedCatalog && catalog.totalCount <= 0) loadRemoteConfiguration()
             }, delayMs)
         }
+    }
+
+    // Ver runServerApiTest/resolveTrialExpiryMillis em ActivationActivity: quando
+    // "SEU TESTE AQUI" gera um teste com sucesso, guarda até quando ele vale
+    // (PREF_TRIAL_ACTIVE_UNTIL) e pra qual MAC (PREF_TRIAL_MAC). Enquanto essa
+    // janela não expirar, o painel de verdade não autorizando esse MAC é
+    // esperado (é só um teste), não um erro a mostrar pro usuário.
+    private fun isTrialActiveFor(mac: String): Boolean {
+        val prefs = getSharedPreferences(ActivationActivity.PREFS_NAME, MODE_PRIVATE)
+        val trialMac = prefs.getString(ActivationActivity.PREF_TRIAL_MAC, "").orEmpty()
+        if (!trialMac.equals(mac, ignoreCase = true)) return false
+        return prefs.getLong(ActivationActivity.PREF_TRIAL_ACTIVE_UNTIL, 0L) > System.currentTimeMillis()
     }
 
     private fun showAccessUnavailable(config: RemoteAppConfig) {
