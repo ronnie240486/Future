@@ -255,6 +255,41 @@ class AppIntegrationRepository {
         }
     }
 
+    /**
+     * Gera um teste DE VERDADE no painel -- mesmo contrato que o Maximus usa
+     * (MacPanelClient.registerTestDevice, achado no repo
+     * MaximusPlayerNativeExact): POST com corpo JSON {"mac": mac} pra
+     * "<API do Servidor>?mac=<mac>". A resposta traz "dns"/"username"/
+     * "password" (às vezes "expiresAt") de uma conta de teste já provisionada
+     * -- ou vem vazia quando o teste foi só solicitado e ainda depende de
+     * alguma ativação manual no painel (não é erro, quem chama decide o que
+     * fazer com um JSON vazio).
+     */
+    fun requestPanelTrial(urlString: String, mac: String, callback: (Result<JSONObject>) -> Unit) {
+        executor.execute {
+            callback(runCatching {
+                val connection = (URL("$urlString?mac=${encode(mac)}").openConnection() as HttpURLConnection).apply {
+                    requestMethod = "POST"
+                    doOutput = true
+                    connectTimeout = 8_000
+                    readTimeout = 15_000
+                    setRequestProperty("Accept", "application/json, text/plain, */*")
+                    setRequestProperty("Content-Type", "application/json")
+                    setRequestProperty("User-Agent", "MaximusTVPlayer/1.0 AndroidTV")
+                }
+                OutputStreamWriter(connection.outputStream, Charsets.UTF_8).use {
+                    it.write(JSONObject().put("mac", mac).toString())
+                }
+                val status = connection.responseCode
+                val text = (if (status in 200..299) connection.inputStream else connection.errorStream)
+                    ?.bufferedReader(Charsets.UTF_8)?.use(BufferedReader::readText).orEmpty().trim()
+                connection.disconnect()
+                if (status !in 200..299) error("Integração HTTP $status")
+                if (text.isBlank()) JSONObject() else JSONObject(text)
+            })
+        }
+    }
+
     // BUG corrigido: quando currentContent vinha null/vazio, o parâmetro
     // current_content simplesmente não era mandado -- pro painel
     // (rencia_app), "não mandou nada" sempre significa "manter o último
