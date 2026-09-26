@@ -233,7 +233,24 @@ class AppIntegrationRepository {
                     ?.bufferedReader(Charsets.UTF_8)?.use { it.readLine().orEmpty() }.orEmpty()
                 connection.disconnect()
                 val html = preview.trimStart().startsWith("<html", true) || preview.trimStart().startsWith("<!doctype", true)
-                ServerTestResult(status in 200..299 && !html, status, contentType, if (html) "Resposta HTML/bloqueio" else "Resposta recebida")
+                // BUG corrigido: qualquer coisa fora de 200-299 (ou com corpo
+                // em HTML) virava "offline" -- um falso negativo muito comum,
+                // porque a "API do Servidor" cadastrada é normalmente um
+                // webhook/endpoint que só aceita POST (ex.: chatbot/WhatsApp).
+                // Um GET de teste nele responde 404/405 com uma página de erro
+                // padrão em HTML -- isso já PROVA que o servidor está de pé e
+                // respondendo, só não aceita esse método/rota. Só uma falha de
+                // rede de verdade (timeout, DNS, conexão recusada -- vira
+                // exceção, cai no onFailure de quem chama) é "offline" de
+                // verdade. Erro do próprio servidor (5xx) ainda conta como
+                // problema a reportar, então continua fora do "online".
+                val ok = status < 500
+                val message = when {
+                    status in 200..299 -> "Resposta recebida"
+                    html -> "Servidor respondeu (HTTP $status, página de erro padrão)"
+                    else -> "Servidor respondeu (HTTP $status)"
+                }
+                ServerTestResult(ok, status, contentType, message)
             })
         }
     }
