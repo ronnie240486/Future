@@ -220,7 +220,7 @@
                 android:clickable="true"
                 android:focusable="true"
                 android:gravity="center"
-                android:text="TESTAR API DO PAINEL"
+                android:text="SEU TESTE AQUI"
                 android:textColor="@color/text_secondary"
                 android:textSize="11sp"
                 android:textStyle="bold" />
